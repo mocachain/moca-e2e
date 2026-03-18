@@ -1,0 +1,43 @@
+name: Test Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - devnet
+          - testnet
+          - mainnet
+      test_pattern:
+        description: 'Test pattern (e.g., smoke_*, leave empty for all)'
+        required: false
+        default: ''
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Make scripts executable
+        run: chmod +x scripts/*.sh
+
+      - name: Run tests against ${{ github.event.inputs.environment }}
+        run: make test ENV=${{ github.event.inputs.environment }}
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ github.event.inputs.environment }}
+          path: test-results/
+          retention-days: 7

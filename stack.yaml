@@ -1,0 +1,27 @@
+# Known-good stack pointer
+# Each entry represents a tested, working combination of commits.
+# Only updated automatically when E2E tests pass.
+
+components:
+  moca:
+    repo: MocaverseNFT/moca
+    ref: main
+  moca-juno:
+    repo: MocaverseNFT/moca-juno
+    ref: main
+  moca-common:
+    repo: MocaverseNFT/moca-common
+    ref: main
+  moca-go-sdk:
+    repo: MocaverseNFT/moca-go-sdk
+    ref: main
+  moca-cosmos-sdk:
+    repo: MocaverseNFT/moca-cosmos-sdk
+    ref: main
+  moca-cometbft:
+    repo: MocaverseNFT/moca-cometbft
+    ref: main
+  moca-ibc-go:
+    repo: MocaverseNFT/moca-ibc-go
+    ref: main
+  # Add more repos as needed

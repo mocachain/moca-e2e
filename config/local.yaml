@@ -1,0 +1,14 @@
+# Local Kind cluster environment
+environment: local
+kind:
+  cluster_name: moca-e2e
+  node_image: kindest/node:v1.31.0
+
+chain:
+  chain_id: moca-local-1
+  rpc: http://localhost:26657
+  grpc: localhost:9090
+  rest: http://localhost:1317
+
+# Set to true to tear down Kind cluster after tests
+cleanup: true

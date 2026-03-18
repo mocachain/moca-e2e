@@ -1,0 +1,25 @@
+# Build artifacts
+/build/
+/bin/
+
+# Test artifacts
+/test-results/
+*.log
+
+# Kind cluster
+/kubeconfig
+
+# Environment overrides (may contain private endpoints)
+config/local-override.yaml
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Temp
+*.tmp
+*.bak
+plan.md

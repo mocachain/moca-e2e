@@ -1,0 +1,94 @@
+name: Update Stack
+
+on:
+  repository_dispatch:
+    types: [repo-updated]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  ROLLING_BRANCH: auto/stack-update
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.E2E_HUB_PAT }}
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Update stack.yaml
+        run: |
+          REPO="${{ github.event.client_payload.repo }}"
+          SHA="${{ github.event.client_payload.sha }}"
+          # Extract component name from repo (e.g., MocaverseNFT/moca -> moca)
+          COMPONENT=$(echo "$REPO" | cut -d'/' -f2)
+
+          echo "Updating $COMPONENT to $SHA"
+
+          if [ "$(yq ".components.${COMPONENT}" stack.yaml)" = "null" ]; then
+            echo "Warning: component '$COMPONENT' not in stack.yaml, skipping."
+            exit 0
+          fi
+
+          OLD_REF=$(yq ".components.${COMPONENT}.ref" stack.yaml)
+          yq -i ".components.${COMPONENT}.ref = \"${SHA}\"" stack.yaml
+          echo "Updated $COMPONENT: $OLD_REF -> $SHA"
+
+          echo "COMPONENT=$COMPONENT" >> $GITHUB_ENV
+          echo "SHA=$SHA" >> $GITHUB_ENV
+          echo "OLD_REF=$OLD_REF" >> $GITHUB_ENV
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet stack.yaml; then
+            echo "No changes to stack.yaml"
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Force-push rolling branch
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$ROLLING_BRANCH"
+          git add stack.yaml
+          git commit -m "chore: update ${{ env.COMPONENT }} to ${{ env.SHA }}"
+          git push --force origin "$ROLLING_BRANCH"
+
+      - name: Create or update PR
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
+        run: |
+          # Check if PR already exists
+          EXISTING_PR=$(gh pr list --head "$ROLLING_BRANCH" --json number --jq '.[0].number // empty')
+
+          if [ -n "$EXISTING_PR" ]; then
+            echo "Rolling PR #$EXISTING_PR already exists, force-push updated it."
+          else
+            gh pr create \
+              --title "chore: update known-good stack pointer" \
+              --body "$(cat <<'EOF'
+          ## Auto-generated rolling PR
+
+          Updates stack.yaml with latest tested component refs.
+          This PR is automatically force-pushed when source repos merge to main.
+
+          **Do not manually merge** — the advance-pointer workflow handles this on green CI.
+          EOF
+            )" \
+              --head "$ROLLING_BRANCH" \
+              --base main
+          fi

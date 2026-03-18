@@ -1,0 +1,8 @@
+# Devnet environment
+environment: devnet
+
+chain:
+  chain_id: moca-devnet-1
+  rpc: ""   # TODO: fill in devnet RPC
+  grpc: ""  # TODO: fill in devnet gRPC
+  rest: ""  # TODO: fill in devnet REST

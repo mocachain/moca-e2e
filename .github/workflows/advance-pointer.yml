@@ -1,0 +1,76 @@
+name: Advance Stack Pointer
+
+on:
+  # Trigger when checks complete on the rolling PR
+  check_suite:
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  ROLLING_BRANCH: auto/stack-update
+
+jobs:
+  advance:
+    runs-on: ubuntu-latest
+    # Only run on successful check suites
+    if: github.event.check_suite.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.E2E_HUB_PAT }}
+
+      - name: Find rolling PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
+        run: |
+          PR_NUMBER=$(gh pr list --head "$ROLLING_BRANCH" --json number,mergeable --jq '.[0] | select(.mergeable == "MERGEABLE") | .number // empty')
+
+          if [ -z "$PR_NUMBER" ]; then
+            echo "No mergeable rolling PR found, skipping."
+            echo "found=false" >> $GITHUB_OUTPUT
+          else
+            echo "Found rolling PR #$PR_NUMBER"
+            echo "found=true" >> $GITHUB_OUTPUT
+            echo "number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check all status checks passed
+        if: steps.pr.outputs.found == 'true'
+        id: checks
+        env:
+          GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
+        run: |
+          PR_NUMBER="${{ steps.pr.outputs.number }}"
+          # Get check status
+          STATUS=$(gh pr checks "$PR_NUMBER" --json bucket --jq '[.[] | .bucket] | if all(. == "pass") then "pass" else "fail" end')
+
+          if [ "$STATUS" = "pass" ]; then
+            echo "All checks passed"
+            echo "passed=true" >> $GITHUB_OUTPUT
+          else
+            echo "Not all checks passed, skipping merge"
+            echo "passed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Merge rolling PR
+        if: steps.pr.outputs.found == 'true' && steps.checks.outputs.passed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
+        run: |
+          PR_NUMBER="${{ steps.pr.outputs.number }}"
+          echo "Merging rolling PR #$PR_NUMBER — advancing known-good stack pointer"
+          gh pr merge "$PR_NUMBER" --squash --delete-branch
+
+      - name: Notify on failure
+        if: steps.pr.outputs.found == 'true' && steps.checks.outputs.passed == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
+        run: |
+          PR_NUMBER="${{ steps.pr.outputs.number }}"
+          PR_URL=$(gh pr view "$PR_NUMBER" --json url --jq '.url')
+          echo "::warning::E2E tests failed for rolling PR $PR_URL"
+          # TODO: Add Slack/Discord notification here

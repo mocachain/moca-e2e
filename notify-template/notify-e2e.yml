@@ -1,0 +1,28 @@
+# Copy this workflow into each source repo at .github/workflows/notify-e2e.yml
+# It fires a repository_dispatch to the moca-e2e hub when code merges to main.
+#
+# Required secret: E2E_HUB_PAT (PAT with repo scope, access to moca-e2e)
+
+name: Notify E2E Hub
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch to moca-e2e
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.E2E_HUB_PAT }}
+          repository: MocaverseNFT/moca-e2e  # Update org/repo as needed
+          event-type: repo-updated
+          client-payload: >-
+            {
+              "repo": "${{ github.repository }}",
+              "sha": "${{ github.sha }}",
+              "ref": "${{ github.ref }}",
+              "actor": "${{ github.actor }}"
+            }

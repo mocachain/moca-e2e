@@ -1,0 +1,8 @@
+# Testnet environment
+environment: testnet
+
+chain:
+  chain_id: moca-testnet-1
+  rpc: ""   # TODO: fill in testnet RPC
+  grpc: ""  # TODO: fill in testnet gRPC
+  rest: ""  # TODO: fill in testnet REST

@@ -1,0 +1,65 @@
+name: Test Stack
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'stack.yaml'
+
+  # Allow manual testing of specific combos
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to test against'
+        required: false
+        default: 'local'
+        type: choice
+        options:
+          - local
+          - devnet
+          - testnet
+
+concurrency:
+  # Cancel in-progress runs when rolling branch is force-pushed
+  group: e2e-test-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ENV: ${{ github.event.inputs.environment || 'local' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          # yq
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+          # Kind (only for local env)
+          if [ "$ENV" = "local" ]; then
+            curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
+            chmod +x ./kind
+            sudo mv ./kind /usr/local/bin/kind
+
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x kubectl
+            sudo mv kubectl /usr/local/bin/kubectl
+          fi
+
+      - name: Make scripts executable
+        run: chmod +x scripts/*.sh
+
+      - name: Run E2E tests
+        run: make test ENV=$ENV
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ env.ENV }}
+          path: test-results/
+          retention-days: 7

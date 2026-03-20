@@ -4,24 +4,21 @@
 
 components:
   moca:
-    repo: MocaverseNFT/moca
+    repo: mocachain/moca
     ref: main
   moca-juno:
-    repo: MocaverseNFT/moca-juno
+    repo: mocachain/moca-juno
     ref: main
   moca-common:
-    repo: MocaverseNFT/moca-common
+    repo: mocachain/moca-common
     ref: main
   moca-go-sdk:
-    repo: MocaverseNFT/moca-go-sdk
+    repo: mocachain/moca-go-sdk
     ref: main
   moca-cosmos-sdk:
-    repo: MocaverseNFT/moca-cosmos-sdk
+    repo: mocachain/moca-cosmos-sdk
     ref: main
   moca-cometbft:
-    repo: MocaverseNFT/moca-cometbft
-    ref: main
-  moca-ibc-go:
-    repo: MocaverseNFT/moca-ibc-go
+    repo: mocachain/moca-cometbft
     ref: main
   # Add more repos as needed

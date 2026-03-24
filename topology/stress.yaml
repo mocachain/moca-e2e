@@ -1,0 +1,48 @@
+# Stress topology: 6 validators (mixed modes), 6 SPs
+# All validator modes represented
+
+chain:
+  chain_id: moca_5151-1
+  denom: amoca
+  genesis_account_balance: "100000000000000000000000000"
+  staking_bond_amount: "10000000000000000000000000"
+  sp_min_deposit: "10000000000000000000000"
+  gov_min_deposit: "10000000000000000000"
+  gov_voting_period: "15s"
+  block_time: "1s"
+
+validators:
+  - name: validator-0
+    mode: docker
+  - name: validator-1
+    mode: cosmovisor
+  - name: validator-2
+    mode: binary
+  - name: validator-3
+    mode: docker
+  - name: validator-4
+    mode: cosmovisor
+  - name: validator-5
+    mode: binary
+
+storage_providers:
+  - name: sp-0
+  - name: sp-1
+  - name: sp-2
+  - name: sp-3
+  - name: sp-4
+  - name: sp-5
+
+services:
+  mysql:
+    image: mysql:8.0
+
+ports:
+  rpc_base: 26657
+  grpc_base: 9090
+  rest_base: 1317
+  evm_rpc_base: 8545
+  evm_ws_base: 8546
+  p2p_base: 26656
+  sp_gateway_base: 9033
+  sp_p2p_base: 9400

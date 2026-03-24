@@ -6,6 +6,9 @@ components:
   moca:
     repo: mocachain/moca
     ref: main
+  moca-storage-provider:
+    repo: mocachain/moca-storage-provider
+    ref: main
   moca-juno:
     repo: mocachain/moca-juno
     ref: main
@@ -21,7 +24,3 @@ components:
   moca-cometbft:
     repo: mocachain/moca-cometbft
     ref: main
-  moca-storage-provider:
-    repo: mocachain/moca-storage-provider
-    ref: main
-  # Add more repos as needed

@@ -2,20 +2,27 @@
 set -euo pipefail
 
 ENV="${1:-local}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+COMPOSE_FILE="$ROOT_DIR/docker-compose.generated.yml"
 
 if [ "$ENV" != "local" ]; then
   echo "Teardown not applicable for remote environment: $ENV"
   exit 0
 fi
 
-CLUSTER_NAME="moca-e2e"
+echo "=== Tearing down local environment ==="
 
-echo "=== Tearing down Kind cluster: $CLUSTER_NAME ==="
-if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
-  kind delete cluster --name "$CLUSTER_NAME"
-  echo "Cluster deleted."
+if [ -f "$COMPOSE_FILE" ]; then
+  docker compose -f "$COMPOSE_FILE" down -v --remove-orphans --timeout 30 2>/dev/null || true
+  rm -f "$COMPOSE_FILE"
+  echo "Docker compose environment stopped and cleaned up."
 else
-  echo "Cluster not found, nothing to tear down."
+  echo "No compose file found, nothing to tear down."
 fi
 
-rm -f kubeconfig
+# Clean up build artifacts
+rm -rf "$ROOT_DIR/build"
+rm -rf "$ROOT_DIR/test-results"
+
+echo "=== Teardown complete ==="

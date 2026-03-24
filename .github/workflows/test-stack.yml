@@ -5,61 +5,134 @@ on:
     branches: [main]
     paths:
       - 'stack.yaml'
+      - 'scripts/**'
+      - 'tests/**'
+      - 'docker/**'
+      - 'topology/**'
 
-  # Allow manual testing of specific combos
   workflow_dispatch:
     inputs:
-      environment:
-        description: 'Environment to test against'
+      topology:
+        description: 'Topology to test'
         required: false
-        default: 'local'
+        default: 'default'
         type: choice
         options:
-          - local
-          - devnet
-          - testnet
+          - default
+          - minimal
+
+permissions:
+  contents: read
 
 concurrency:
-  # Cancel in-progress runs when rolling branch is force-pushed
   group: e2e-test-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     env:
-      ENV: ${{ github.event.inputs.environment || 'local' }}
+      TOPOLOGY: topology/${{ github.event.inputs.topology || 'default' }}.yaml
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Install tools
         run: |
-          # yq
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${{ matrix.arch }}
           sudo chmod +x /usr/local/bin/yq
 
-          # Kind (only for local env)
-          if [ "$ENV" = "local" ]; then
-            curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
-            chmod +x ./kind
-            sudo mv ./kind /usr/local/bin/kind
-
-            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-            chmod +x kubectl
-            sudo mv kubectl /usr/local/bin/kubectl
-          fi
-
       - name: Make scripts executable
-        run: chmod +x scripts/*.sh
+        run: |
+          chmod +x scripts/*.sh
+          chmod +x tests/*.sh
+
+      - name: Clone repos at stack.yaml refs
+        run: ./scripts/clone-repos.sh stack.yaml
+        env:
+          GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
+
+      - name: Generate docker-compose
+        run: ./scripts/generate-compose.sh "$TOPOLOGY" docker-compose.generated.yml
+
+      - name: Build images
+        run: ./scripts/build.sh local
+
+      - name: Start services
+        run: |
+          docker compose -f docker-compose.generated.yml up -d
+          ./scripts/wait-for-chain.sh http://localhost:26657 5 180
 
       - name: Run E2E tests
-        run: make test ENV=$ENV
+        run: ./scripts/run-suite.sh local config/local.yaml
+
+      - name: Export state hashes
+        if: always()
+        run: |
+          mkdir -p test-results
+          ./scripts/export-state.sh \
+            http://localhost:26657 \
+            test-results/state-hashes-${{ matrix.arch }}.json \
+            100 || echo "State export failed"
+
+      - name: Upload state hashes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: state-hashes-${{ matrix.arch }}
+          path: test-results/state-hashes-${{ matrix.arch }}.json
+          retention-days: 7
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          mkdir -p test-results/logs
+          docker compose -f docker-compose.generated.yml logs > test-results/logs/all-${{ matrix.arch }}.log 2>&1 || true
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ env.ENV }}
+          name: test-results-${{ matrix.arch }}
           path: test-results/
           retention-days: 7
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f docker-compose.generated.yml down -v --remove-orphans --timeout 30 || true
+
+  compare-state:
+    needs: [e2e]
+    if: always() && needs.e2e.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download AMD64 state hashes
+        uses: actions/download-artifact@v4
+        with:
+          name: state-hashes-amd64
+          path: state-amd64/
+
+      - name: Download ARM64 state hashes
+        uses: actions/download-artifact@v4
+        with:
+          name: state-hashes-arm64
+          path: state-arm64/
+
+      - name: Compare state determinism
+        run: |
+          chmod +x scripts/compare-state.sh
+          ./scripts/compare-state.sh \
+            state-amd64/state-hashes-amd64.json \
+            state-arm64/state-hashes-arm64.json

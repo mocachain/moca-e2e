@@ -2,12 +2,12 @@
 /build/
 /bin/
 
+# Generated compose
+docker-compose.generated.yml
+
 # Test artifacts
 /test-results/
 *.log
-
-# Kind cluster
-/kubeconfig
 
 # Environment overrides (may contain private endpoints)
 config/local-override.yaml

@@ -1,0 +1,33 @@
+# Minimal topology: 1 validator, 1 SP
+# Fast local smoke testing
+
+chain:
+  chain_id: moca_5151-1
+  denom: amoca
+  genesis_account_balance: "100000000000000000000000000"
+  staking_bond_amount: "10000000000000000000000000"
+  sp_min_deposit: "10000000000000000000000"
+  gov_min_deposit: "10000000000000000000"
+  gov_voting_period: "15s"
+  block_time: "1s"
+
+validators:
+  - name: validator-0
+    mode: docker
+
+storage_providers:
+  - name: sp-0
+
+services:
+  mysql:
+    image: mysql:8.0
+
+ports:
+  rpc_base: 26657
+  grpc_base: 9090
+  rest_base: 1317
+  evm_rpc_base: 8545
+  evm_ws_base: 8546
+  p2p_base: 26656
+  sp_gateway_base: 9033
+  sp_p2p_base: 9400

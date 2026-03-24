@@ -1,27 +1,57 @@
-.PHONY: test setup teardown clone build help
+.PHONY: test setup teardown clone build generate help export-state compare-state
 
 ENV ?= local
+TOPOLOGY ?= topology/default.yaml
 STACK_FILE ?= stack.yaml
 CONFIG_FILE ?= config/$(ENV).yaml
+COMPOSE_FILE ?= docker-compose.generated.yml
 
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-test: ## Run E2E tests (ENV=local|devnet|testnet|mainnet)
-	@echo "Running E2E tests against: $(ENV)"
-	./scripts/run-tests.sh $(ENV) $(STACK_FILE)
+test: ## Run E2E tests (ENV=local|devnet|testnet|mainnet, TOPOLOGY=topology/*.yaml)
+	./scripts/run-tests.sh $(ENV) $(STACK_FILE) $(TOPOLOGY)
 
-setup: ## Set up test environment (Kind for local, noop for remote)
-	./scripts/setup-env.sh $(ENV) $(STACK_FILE)
+test-minimal: ## Quick smoke test with 1 validator, 1 SP
+	./scripts/run-tests.sh local $(STACK_FILE) topology/minimal.yaml
 
-teardown: ## Tear down local Kind cluster
+test-stress: ## Stress test with mixed validator modes
+	./scripts/run-tests.sh local $(STACK_FILE) topology/stress.yaml
+
+setup: ## Set up local docker-compose environment
+	./scripts/setup-env.sh $(ENV) $(STACK_FILE) $(TOPOLOGY)
+
+teardown: ## Tear down local environment
 	./scripts/teardown.sh $(ENV)
 
-clone: ## Clone all repos at stack.yaml refs into ./build/
+clone: ## Clone all repos at stack.yaml refs
 	./scripts/clone-repos.sh $(STACK_FILE)
 
-build: clone ## Build all components from cloned repos
+build: ## Build all Docker images from cloned repos
 	./scripts/build.sh $(ENV)
+
+generate: ## Generate docker-compose from topology
+	./scripts/generate-compose.sh $(TOPOLOGY) $(COMPOSE_FILE)
+
+up: generate ## Start services (no tests)
+	docker compose -f $(COMPOSE_FILE) up -d
+	./scripts/wait-for-chain.sh http://localhost:26657 5 120
+
+down: ## Stop services
+	docker compose -f $(COMPOSE_FILE) down -v --remove-orphans --timeout 30
+
+logs: ## Show service logs
+	docker compose -f $(COMPOSE_FILE) logs -f
+
+ps: ## Show running services
+	docker compose -f $(COMPOSE_FILE) ps
+
+export-state: ## Export state hashes for determinism check
+	mkdir -p test-results
+	./scripts/export-state.sh http://localhost:26657 test-results/state-hashes.json 100
+
+compare-state: ## Compare state hashes from two arch runs
+	./scripts/compare-state.sh $(FILE_A) $(FILE_B)
 
 update-stack: ## Update a component ref: make update-stack REPO=moca REF=abc1234
 	./scripts/update-stack.sh $(STACK_FILE) $(REPO) $(REF)

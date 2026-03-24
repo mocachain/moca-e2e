@@ -29,7 +29,6 @@ jobs:
         run: |
           REPO="${{ github.event.client_payload.repo }}"
           SHA="${{ github.event.client_payload.sha }}"
-          # Extract component name from repo (e.g., MocaverseNFT/moca -> moca)
           COMPONENT=$(echo "$REPO" | cut -d'/' -f2)
 
           echo "Updating $COMPONENT to $SHA"
@@ -45,13 +44,11 @@ jobs:
 
           echo "COMPONENT=$COMPONENT" >> $GITHUB_ENV
           echo "SHA=$SHA" >> $GITHUB_ENV
-          echo "OLD_REF=$OLD_REF" >> $GITHUB_ENV
 
       - name: Check for changes
         id: changes
         run: |
           if git diff --quiet stack.yaml; then
-            echo "No changes to stack.yaml"
             echo "changed=false" >> $GITHUB_OUTPUT
           else
             echo "changed=true" >> $GITHUB_OUTPUT
@@ -72,11 +69,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
         run: |
-          # Check if PR already exists
           EXISTING_PR=$(gh pr list --head "$ROLLING_BRANCH" --json number --jq '.[0].number // empty')
-
           if [ -n "$EXISTING_PR" ]; then
-            echo "Rolling PR #$EXISTING_PR already exists, force-push updated it."
+            echo "Rolling PR #$EXISTING_PR updated via force-push."
           else
             gh pr create \
               --title "chore: update known-good stack pointer" \
@@ -84,9 +79,9 @@ jobs:
           ## Auto-generated rolling PR
 
           Updates stack.yaml with latest tested component refs.
-          This PR is automatically force-pushed when source repos merge to main.
+          Automatically force-pushed when source repos merge to main.
 
-          **Do not manually merge** — the advance-pointer workflow handles this on green CI.
+          **Do not manually merge** — advance-pointer workflow handles this on green CI.
           EOF
             )" \
               --head "$ROLLING_BRANCH" \

@@ -1,0 +1,17 @@
+# Only send relevant build dirs to Docker context
+.git
+.github
+test-results
+topology
+config
+notify-template
+tests
+*.md
+*.yaml
+!docker-compose.generated.yml
+Makefile
+
+# Exclude .git from cloned repos (huge)
+build/*/.git
+build/*/vendor
+build/**/node_modules

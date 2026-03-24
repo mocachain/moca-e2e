@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # mocad binary is copied in at build time (same binary as validators use)
-COPY --from=mocad-local /usr/local/bin/mocad /usr/local/bin/mocad
+COPY --from=mocad-local:latest /usr/local/bin/mocad /usr/local/bin/mocad
 
 COPY scripts/init-genesis.sh /init-genesis.sh
 RUN chmod +x /init-genesis.sh

@@ -4,7 +4,7 @@ ARG TARGETARCH
 
 WORKDIR /build
 
-COPY moca-storage-provider/ .
+COPY build/moca-storage-provider/ .
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl jq mysql-client \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build/build/bin/gnfd-sp /usr/local/bin/gnfd-sp
+COPY --from=builder /build/build/moca-sp /usr/local/bin/moca-sp
 COPY docker/entrypoint-sp.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

@@ -4,7 +4,7 @@ ARG TARGETARCH
 
 WORKDIR /build
 
-COPY moca/ .
+COPY build/moca/ .
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl jq \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build/build/bin/mocad /usr/local/bin/mocad
+COPY --from=builder /build/build/mocad /usr/local/bin/mocad
 COPY --from=builder /go/bin/cosmovisor /usr/local/bin/cosmovisor
 COPY docker/entrypoint-cosmovisor.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

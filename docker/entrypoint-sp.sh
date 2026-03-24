@@ -3,7 +3,7 @@ set -euo pipefail
 
 SP_NAME="${SP_NAME:?SP_NAME required}"
 SHARED_DIR="${SHARED_DIR:-/shared}"
-SP_HOME="${SP_HOME:-/root/.gnfd-sp}"
+SP_HOME="${SP_HOME:-/root/.moca-sp}"
 MYSQL_HOST="${MYSQL_HOST:-mysql}"
 MYSQL_PORT="${MYSQL_PORT:-3306}"
 MYSQL_USER="${MYSQL_USER:-root}"
@@ -65,6 +65,6 @@ if [ -f "$SP_HOME/config.toml" ]; then
 fi
 
 echo "Starting storage provider..."
-exec gnfd-sp \
+exec moca-sp \
   --config "$SP_HOME/config.toml" \
   "$@"

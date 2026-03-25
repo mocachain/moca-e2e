@@ -40,7 +40,7 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 30
     env:
       TOPOLOGY: topology/${{ github.event.inputs.topology || 'default' }}.yaml
 
@@ -48,6 +48,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install tools
+        timeout-minutes: 1
         run: |
           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${{ matrix.arch }}
           sudo chmod +x /usr/local/bin/yq
@@ -58,6 +59,7 @@ jobs:
           chmod +x tests/*.sh
 
       - name: Clone repos at stack.yaml refs
+        timeout-minutes: 2
         run: ./scripts/clone-repos.sh stack.yaml
         env:
           GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
@@ -66,39 +68,37 @@ jobs:
         run: ./scripts/generate-compose.sh "$TOPOLOGY" docker-compose.generated.yml
 
       - name: Build images
+        timeout-minutes: 15
         run: ./scripts/build.sh local
         env:
           GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
 
       - name: Start services
+        timeout-minutes: 8
         run: |
-          # Start in stages: init → validators → wait → SPs
           docker compose -f docker-compose.generated.yml up genesis-init 2>&1 | tail -5
           docker compose -f docker-compose.generated.yml up -d --no-deps mysql $(docker compose -f docker-compose.generated.yml config --services | grep validator)
           ./scripts/wait-for-chain.sh http://localhost:26657 5 300
           docker compose -f docker-compose.generated.yml up -d --no-deps $(docker compose -f docker-compose.generated.yml config --services | grep sp-) || true
 
       - name: Run E2E tests
+        timeout-minutes: 5
         run: ./scripts/run-suite.sh local config/local.yaml
 
       - name: Collect logs
         if: always()
+        timeout-minutes: 2
         run: |
           mkdir -p test-results/logs
           COMPOSE="docker compose -f docker-compose.generated.yml"
 
-          # Per-service logs
           for svc in $($COMPOSE config --services 2>/dev/null); do
             $COMPOSE logs "$svc" > "test-results/logs/${svc}.log" 2>&1 || true
           done
 
-          # Combined log
           $COMPOSE logs > test-results/logs/all.log 2>&1 || true
-
-          # Container status
           $COMPOSE ps -a > test-results/logs/containers.txt 2>&1 || true
 
-          # Grep for critical errors across all logs
           echo "=== Critical errors ===" | tee test-results/logs/errors-summary.txt
           grep -ihE "ERR|panic|CONSENSUS FAILURE|validator set is empty|invalid chain-id|fatal" \
             test-results/logs/*.log 2>/dev/null \
@@ -116,4 +116,5 @@ jobs:
 
       - name: Teardown
         if: always()
+        timeout-minutes: 2
         run: docker compose -f docker-compose.generated.yml down -v --remove-orphans --timeout 30 || true

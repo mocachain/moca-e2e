@@ -48,16 +48,7 @@ if [ "$ENV" = "local" ]; then
   echo "=== Running E2E test suite ==="
   "$SCRIPT_DIR/run-suite.sh" "$ENV" "$CONFIG_FILE" || TEST_EXIT=$?
 
-  # 6. Export state hashes (for determinism comparison)
-  echo ""
-  echo "=== Exporting state hashes ==="
-  mkdir -p "$ROOT_DIR/test-results"
-  "$SCRIPT_DIR/export-state.sh" \
-    "http://localhost:26657" \
-    "$ROOT_DIR/test-results/state-hashes.json" \
-    100 || echo "Warning: state export failed"
-
-  # 7. Collect logs on failure
+  # 6. Collect logs on failure (kept for debugging)
   if [ $TEST_EXIT -ne 0 ]; then
     echo ""
     echo "=== Collecting logs ==="

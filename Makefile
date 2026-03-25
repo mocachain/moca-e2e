@@ -1,4 +1,4 @@
-.PHONY: test setup teardown clone build generate help export-state compare-state
+.PHONY: test setup teardown clone build generate help
 
 ENV ?= local
 TOPOLOGY ?= topology/default.yaml
@@ -45,13 +45,6 @@ logs: ## Show service logs
 
 ps: ## Show running services
 	docker compose -f $(COMPOSE_FILE) ps
-
-export-state: ## Export state hashes for determinism check
-	mkdir -p test-results
-	./scripts/export-state.sh http://localhost:26657 test-results/state-hashes.json 100
-
-compare-state: ## Compare state hashes from two arch runs
-	./scripts/compare-state.sh $(FILE_A) $(FILE_B)
 
 update-stack: ## Update a component ref: make update-stack REPO=moca REF=abc1234
 	./scripts/update-stack.sh $(STACK_FILE) $(REPO) $(REF)

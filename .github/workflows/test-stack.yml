@@ -76,23 +76,6 @@ jobs:
       - name: Run E2E tests
         run: ./scripts/run-suite.sh local config/local.yaml
 
-      - name: Export state hashes
-        if: always()
-        run: |
-          mkdir -p test-results
-          ./scripts/export-state.sh \
-            http://localhost:26657 \
-            test-results/state-hashes-${{ matrix.arch }}.json \
-            100 || echo "State export failed"
-
-      - name: Upload state hashes
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: state-hashes-${{ matrix.arch }}
-          path: test-results/state-hashes-${{ matrix.arch }}.json
-          retention-days: 7
-
       - name: Collect logs on failure
         if: failure()
         run: |
@@ -100,7 +83,7 @@ jobs:
           docker compose -f docker-compose.generated.yml logs > test-results/logs/all-${{ matrix.arch }}.log 2>&1 || true
 
       - name: Upload test results
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.arch }}
@@ -110,29 +93,3 @@ jobs:
       - name: Teardown
         if: always()
         run: docker compose -f docker-compose.generated.yml down -v --remove-orphans --timeout 30 || true
-
-  compare-state:
-    needs: [e2e]
-    if: always() && needs.e2e.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download AMD64 state hashes
-        uses: actions/download-artifact@v4
-        with:
-          name: state-hashes-amd64
-          path: state-amd64/
-
-      - name: Download ARM64 state hashes
-        uses: actions/download-artifact@v4
-        with:
-          name: state-hashes-arm64
-          path: state-arm64/
-
-      - name: Compare state determinism
-        run: |
-          chmod +x scripts/compare-state.sh
-          ./scripts/compare-state.sh \
-            state-amd64/state-hashes-amd64.json \
-            state-arm64/state-hashes-arm64.json

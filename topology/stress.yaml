@@ -42,7 +42,7 @@ ports:
   grpc_base: 9090
   rest_base: 1317
   evm_rpc_base: 8545
-  evm_ws_base: 8546
-  p2p_base: 26656
+  evm_ws_base: 8560
+  p2p_base: 26600
   sp_gateway_base: 9033
   sp_p2p_base: 9400

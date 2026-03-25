@@ -138,8 +138,8 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
       interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 10s
-    restart: unless-stopped
+      start_period: 60s
+    restart: on-failure
     networks:
       - moca-e2e
 
@@ -184,8 +184,8 @@ for i in $(seq 0 $((NUM_SPS - 1))); do
       interval: 10s
       timeout: 5s
       retries: 30
-      start_period: 30s
-    restart: unless-stopped
+      start_period: 90s
+    restart: on-failure
     networks:
       - moca-e2e
 

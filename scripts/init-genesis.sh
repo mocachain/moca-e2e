@@ -138,10 +138,9 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
   VHOME="$WORK_DIR/$VNAME"
 
   # Copy genesis (with all accounts) to this validator's home
-  cp "$GENESIS" "$VHOME/config/genesis.json"
-
-  # Copy validator-0's keyring to other validator homes for gentx
   if [ "$i" -gt 0 ]; then
+    cp "$GENESIS" "$VHOME/config/genesis.json"
+    # Copy keyring so gentx can find the key
     cp -r "$VALIDATOR_0_HOME/keyring-test" "$VHOME/" 2>/dev/null || true
   fi
 
@@ -244,6 +243,15 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
 
   # Patch allow_duplicate_ip
   sed -i 's|allow_duplicate_ip = false|allow_duplicate_ip = true|' "$VOUT/config/config.toml"
+
+  # Patch app.toml — bridge chain IDs (required for InitChain validation)
+  SRC_CHAIN_ID=$(echo "$CHAIN_ID" | grep -oP '\d+' | head -1)
+  sed -i "s|src-chain-id = 1|src-chain-id = ${SRC_CHAIN_ID:-5151}|" "$VOUT/config/app.toml"
+  sed -i "s|dest-bsc-chain-id = 2|dest-bsc-chain-id = 97|" "$VOUT/config/app.toml"
+  sed -i "s|dest-op-chain-id = 3|dest-op-chain-id = 5611|" "$VOUT/config/app.toml"
+
+  # Patch app.toml — minimum gas prices
+  sed -i "s|minimum-gas-prices = \".*\"|minimum-gas-prices = \"0${DENOM}\"|" "$VOUT/config/app.toml"
 
   # Copy keyring
   cp -r "$VHOME/keyring-test/"* "$VOUT/keyring-test/" 2>/dev/null || true

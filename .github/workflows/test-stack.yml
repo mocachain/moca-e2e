@@ -67,11 +67,16 @@ jobs:
 
       - name: Build images
         run: ./scripts/build.sh local
+        env:
+          GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
 
       - name: Start services
         run: |
-          docker compose -f docker-compose.generated.yml up -d
-          ./scripts/wait-for-chain.sh http://localhost:26657 5 180
+          # Start in stages: init → validators → wait → SPs
+          docker compose -f docker-compose.generated.yml up genesis-init 2>&1 | tail -5
+          docker compose -f docker-compose.generated.yml up -d --no-deps mysql $(docker compose -f docker-compose.generated.yml config --services | grep validator)
+          ./scripts/wait-for-chain.sh http://localhost:26657 5 300
+          docker compose -f docker-compose.generated.yml up -d --no-deps $(docker compose -f docker-compose.generated.yml config --services | grep sp-) || true
 
       - name: Run E2E tests
         run: ./scripts/run-suite.sh local config/local.yaml

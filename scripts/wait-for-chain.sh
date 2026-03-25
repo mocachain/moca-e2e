@@ -17,8 +17,8 @@ for i in $(seq 1 "$TIMEOUT"); do
     HEIGHT=$(echo "$RESPONSE" | jq -r '.result.sync_info.latest_block_height // "0"')
     CATCHING_UP=$(echo "$RESPONSE" | jq -r '.result.sync_info.catching_up // "true"')
 
-    if [ "$HEIGHT" -ge "$MIN_HEIGHT" ] 2>/dev/null && [ "$CATCHING_UP" = "false" ]; then
-      echo "Chain is ready. Height: $HEIGHT, Catching up: $CATCHING_UP"
+    if [ "$HEIGHT" -ge "$MIN_HEIGHT" ] 2>/dev/null; then
+      echo "Chain is ready. Height: $HEIGHT"
       exit 0
     fi
 

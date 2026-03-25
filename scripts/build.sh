@@ -8,8 +8,17 @@ ENV="${1:-local}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$ROOT_DIR/build"
+ARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
 
-echo "=== Building Docker images ==="
+# Pass GITHUB_TOKEN for private dependency resolution in Docker builds
+TOKEN_ARG=""
+if [ -n "${GH_TOKEN:-}" ]; then
+  TOKEN_ARG="--build-arg GITHUB_TOKEN=${GH_TOKEN}"
+elif [ -n "${GITHUB_TOKEN:-}" ]; then
+  TOKEN_ARG="--build-arg GITHUB_TOKEN=${GITHUB_TOKEN}"
+fi
+
+echo "=== Building Docker images (arch: $ARCH) ==="
 
 # Verify repos are cloned
 if [ ! -d "$BUILD_DIR/moca" ]; then
@@ -23,7 +32,8 @@ echo "--- Building mocad image ---"
 docker build \
   -t mocad-local:latest \
   -f "$ROOT_DIR/docker/Dockerfile.mocad" \
-  --build-arg TARGETARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" \
+  --build-arg TARGETARCH="$ARCH" \
+  $TOKEN_ARG \
   "$ROOT_DIR"
 
 # --- Build cosmovisor image ---
@@ -31,7 +41,8 @@ echo "--- Building cosmovisor image ---"
 docker build \
   -t mocad-cosmovisor:latest \
   -f "$ROOT_DIR/docker/Dockerfile.cosmovisor" \
-  --build-arg TARGETARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" \
+  --build-arg TARGETARCH="$ARCH" \
+  $TOKEN_ARG \
   "$ROOT_DIR"
 
 # --- Build SP image (if cloned) ---
@@ -40,7 +51,8 @@ if [ -d "$BUILD_DIR/moca-storage-provider" ]; then
   docker build \
     -t moca-sp-local:latest \
     -f "$ROOT_DIR/docker/Dockerfile.sp" \
-    --build-arg TARGETARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" \
+    --build-arg TARGETARCH="$ARCH" \
+    $TOKEN_ARG \
     "$ROOT_DIR"
 else
   echo "Warning: moca-storage-provider not cloned, skipping SP image build"

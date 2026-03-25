@@ -1,6 +1,7 @@
 FROM golang:1.23-bullseye AS builder
 
 ARG TARGETARCH
+ARG GITHUB_TOKEN=""
 
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 
@@ -10,6 +11,7 @@ COPY build/moca/ .
 
 # Init a git repo so Makefile's git commands don't fail
 RUN git init && git add -A && git commit -m "build" --allow-empty 2>/dev/null || true
+RUN if [ -n "$GITHUB_TOKEN" ]; then git config --global url."https://${GITHUB_TOKEN}:@github.com/".insteadOf "https://github.com/"; fi
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \

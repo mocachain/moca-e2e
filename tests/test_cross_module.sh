@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# E2E test: cross-module transactions to catch non-determinism
-# Tests bank, staking, distribution, and governance in sequence
+# E2E test: cross-module transactions to verify module interop
+# Tests bank, staking, distribution in sequence on the same chain state
 set -euo pipefail
 
 ENV="${1:-local}"

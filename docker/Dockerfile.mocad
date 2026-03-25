@@ -1,11 +1,15 @@
 FROM golang:1.23-bullseye AS builder
 
 ARG TARGETARCH
-ARG BUILD_TAGS="netgo,ledger"
+
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
 COPY build/moca/ .
+
+# Init a git repo so Makefile's git commands don't fail
+RUN git init && git add -A && git commit -m "build" --allow-empty 2>/dev/null || true
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \

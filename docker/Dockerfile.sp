@@ -2,9 +2,13 @@ FROM golang:1.23-bullseye AS builder
 
 ARG TARGETARCH
 
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /build
 
 COPY build/moca-storage-provider/ .
+
+RUN git init && git add -A && git commit -m "build" --allow-empty 2>/dev/null || true
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \

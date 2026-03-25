@@ -1,14 +1,12 @@
-# Local Kind cluster environment
+# Local docker-compose environment
+# Ports are dynamically assigned based on topology.
+# These are the defaults for validator-0.
 environment: local
-kind:
-  cluster_name: moca-e2e
-  node_image: kindest/node:v1.31.0
 
 chain:
-  chain_id: moca-local-1
+  chain_id: moca_5151-1
   rpc: http://localhost:26657
   grpc: localhost:9090
   rest: http://localhost:1317
-
-# Set to true to tear down Kind cluster after tests
-cleanup: true
+  evm_rpc: http://localhost:8545
+  evm_ws: ws://localhost:8546

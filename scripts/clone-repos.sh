@@ -8,6 +8,11 @@ BUILD_DIR="$ROOT_DIR/build"
 
 mkdir -p "$BUILD_DIR"
 
+# Configure git to use GH_TOKEN for private repos (CI)
+if [ -n "${GH_TOKEN:-}" ]; then
+  git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+fi
+
 echo "=== Cloning repos from $STACK_FILE ==="
 
 # Parse stack.yaml and clone each component at its ref

@@ -1,0 +1,15 @@
+# Genesis init container — generates keys, genesis, and validator/SP configs.
+# Writes everything to /output which is a shared volume.
+FROM debian:bullseye-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl jq bash \
+    && rm -rf /var/lib/apt/lists/*
+
+# mocad binary is copied in at build time (same binary as validators use)
+COPY --from=mocad-local:latest /usr/local/bin/mocad /usr/local/bin/mocad
+
+COPY scripts/init-genesis.sh /init-genesis.sh
+RUN chmod +x /init-genesis.sh
+
+ENTRYPOINT ["/init-genesis.sh"]

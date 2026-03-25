@@ -2,7 +2,7 @@
 environment: testnet
 
 chain:
-  chain_id: moca-testnet-1
-  rpc: ""   # TODO: fill in testnet RPC
-  grpc: ""  # TODO: fill in testnet gRPC
-  rest: ""  # TODO: fill in testnet REST
+  chain_id: moca_222888-1
+  rpc: https://tm-rpc.testnet.mocachain.dev
+  grpc: grpc.testnet.mocachain.dev:443
+  rest: https://lcd.testnet.mocachain.dev

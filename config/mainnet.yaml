@@ -1,11 +1,10 @@
-# Mainnet environment (read-only smoke tests only)
+# Mainnet environment (smoke tests only)
 environment: mainnet
 
 chain:
-  chain_id: moca-1
-  rpc: ""   # TODO: fill in mainnet RPC
-  grpc: ""  # TODO: fill in mainnet gRPC
-  rest: ""  # TODO: fill in mainnet REST
+  chain_id: moca_2288-1
+  rpc: https://tm-rpc.mocachain.dev
+  grpc: grpc.mocachain.dev:443
+  rest: https://lcd.mocachain.dev
 
-# Safety: only smoke tests allowed against mainnet
 readonly: true

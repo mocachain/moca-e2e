@@ -1,0 +1,48 @@
+# Default topology: 6 validators, 6 SPs
+# Used as CI default and baseline for state comparison
+
+chain:
+  chain_id: moca_5151-1
+  denom: amoca
+  genesis_account_balance: "100000000000000000000000000"  # 1e26
+  staking_bond_amount: "10000000000000000000000000"        # 1e25
+  sp_min_deposit: "10000000000000000000000"                # 1e22
+  gov_min_deposit: "10000000000000000000"                  # 1e19
+  gov_voting_period: "15s"
+  block_time: "1s"
+
+validators:
+  - name: validator-0
+    mode: docker
+  - name: validator-1
+    mode: docker
+  - name: validator-2
+    mode: docker
+  - name: validator-3
+    mode: cosmovisor
+  - name: validator-4
+    mode: cosmovisor
+  - name: validator-5
+    mode: docker
+
+storage_providers:
+  - name: sp-0
+  - name: sp-1
+  - name: sp-2
+  - name: sp-3
+  - name: sp-4
+  - name: sp-5
+
+services:
+  mysql:
+    image: mysql:8.0
+
+ports:
+  rpc_base: 26657
+  grpc_base: 9090
+  rest_base: 1317
+  evm_rpc_base: 8545
+  evm_ws_base: 8560
+  p2p_base: 26600
+  sp_gateway_base: 9033
+  sp_p2p_base: 9400

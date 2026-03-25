@@ -1,8 +1,8 @@
-# Devnet environment
+# Devnet-2 environment
 environment: devnet
 
 chain:
-  chain_id: moca-devnet-1
-  rpc: ""   # TODO: fill in devnet RPC
-  grpc: ""  # TODO: fill in devnet gRPC
-  rest: ""  # TODO: fill in devnet REST
+  chain_id: moca_5151-1
+  rpc: https://tm-rpc.devnet-2.mocachain.dev
+  grpc: grpc.devnet-2.mocachain.dev:443
+  rest: https://lcd.devnet-2.mocachain.dev

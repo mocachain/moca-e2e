@@ -1,0 +1,15 @@
+# Only send relevant dirs to Docker context
+.git
+.github
+test-results
+topology
+config
+notify-template
+tests
+*.md
+Makefile
+
+# Keep docker/ and build/ and scripts/ (needed by Dockerfiles)
+# Exclude large/unnecessary from cloned repos
+build/*/vendor
+build/**/node_modules

@@ -40,19 +40,23 @@ echo "--- Step 2: Patch genesis ---"
 
 # Set denom
 TMPFILE=$(mktemp)
-jq --arg denom "$DENOM" '
-  .app_state.staking.params.bond_denom = $denom |
-  .app_state.mint.params.mint_denom = $denom |
-  .app_state.crisis.constant_fee.denom = $denom |
-  .app_state.gov.deposit_params.min_deposit[0].denom = $denom |
-  .app_state.gov.params.min_deposit[0].denom = $denom
-' "$GENESIS" > "$TMPFILE" && mv "$TMPFILE" "$GENESIS"
+
+# Replace ALL occurrences of "stake" denom with our denom
+sed -i "s/\"stake\"/\"${DENOM}\"/g" "$GENESIS"
+
+# Set denom_metadata for bank module (required for chain init — name field must not be blank)
+NATIVE_COIN_DESC="{\"description\":\"The native staking token of the Moca.\",\"denom_units\":[{\"denom\":\"${DENOM}\",\"exponent\":0,\"aliases\":[\"wei\"]}],\"base\":\"${DENOM}\",\"display\":\"${DENOM}\",\"name\":\"Moca\",\"symbol\":\"MOCA\"}"
+jq --argjson meta "[${NATIVE_COIN_DESC}]" '.app_state.bank.denom_metadata = $meta' "$GENESIS" > "$TMPFILE" && mv "$TMPFILE" "$GENESIS"
 
 # Set governance params
-jq --arg period "$GOV_VOTING_PERIOD" --arg deposit "$GOV_MIN_DEPOSIT" --arg denom "$DENOM" '
+# expedited_min_deposit must be strictly greater than min_deposit
+EXPEDITED_DEPOSIT="${GOV_MIN_DEPOSIT}0"  # 10x min deposit (append a zero)
+jq --arg period "$GOV_VOTING_PERIOD" --arg deposit "$GOV_MIN_DEPOSIT" --arg expedited "$EXPEDITED_DEPOSIT" --arg denom "$DENOM" '
   .app_state.gov.params.voting_period = $period |
+  .app_state.gov.params.expedited_voting_period = "10s" |
   .app_state.gov.params.max_deposit_period = $period |
   .app_state.gov.params.min_deposit = [{"denom": $denom, "amount": $deposit}] |
+  .app_state.gov.params.expedited_min_deposit = [{"denom": $denom, "amount": $expedited}] |
   .app_state.gov.deposit_params.max_deposit_period = $period |
   .app_state.gov.deposit_params.min_deposit = [{"denom": $denom, "amount": $deposit}]
 ' "$GENESIS" > "$TMPFILE" && mv "$TMPFILE" "$GENESIS"
@@ -67,6 +71,10 @@ echo "--- Step 3: Generate validator keys ---"
 
 declare -A VALIDATOR_ADDRESSES
 declare -A VALIDATOR_NODE_IDS
+declare -A RELAYER_ADDRESSES
+declare -A CHALLENGER_ADDRESSES
+declare -A BLS_KEYS
+declare -A BLS_PROOFS
 
 for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
   VNAME="validator-$i"
@@ -76,22 +84,35 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
     mocad init "$VNAME" --chain-id "$CHAIN_ID" --home "$VHOME" 2>/dev/null
   fi
 
-  # Generate operator key
+  # Generate validator operator key
   mocad keys add "$VNAME" --keyring-backend "$KEYRING" --home "$VHOME" 2>/dev/null
   ADDR=$(mocad keys show "$VNAME" -a --keyring-backend "$KEYRING" --home "$VHOME")
   VALIDATOR_ADDRESSES[$i]="$ADDR"
+
+  # Generate relayer key
+  mocad keys add "relayer-$i" --keyring-backend "$KEYRING" --home "$WORK_DIR/relayer-$i" 2>/dev/null
+  RELAYER_ADDRESSES[$i]=$(mocad keys show "relayer-$i" -a --keyring-backend "$KEYRING" --home "$WORK_DIR/relayer-$i")
+
+  # Generate challenger key
+  mocad keys add "challenger-$i" --keyring-backend "$KEYRING" --home "$WORK_DIR/challenger-$i" 2>/dev/null
+  CHALLENGER_ADDRESSES[$i]=$(mocad keys show "challenger-$i" -a --keyring-backend "$KEYRING" --home "$WORK_DIR/challenger-$i")
+
+  # Generate BLS key for validator
+  mocad keys add "validator_bls$i" --keyring-backend "$KEYRING" --home "$VHOME" --algo eth_bls 2>/dev/null
+  BLS_KEYS[$i]=$(mocad keys show "validator_bls$i" --keyring-backend "$KEYRING" --home "$VHOME" --output json | jq -r .pubkey_hex)
+  BLS_PROOFS[$i]=$(mocad keys sign "${BLS_KEYS[$i]}" --from "validator_bls$i" --keyring-backend "$KEYRING" --home "$VHOME")
 
   # Get node ID
   NODE_ID=$(mocad tendermint show-node-id --home "$VHOME")
   VALIDATOR_NODE_IDS[$i]="$NODE_ID"
 
-  echo "  $VNAME: addr=$ADDR node_id=$NODE_ID"
+  echo "  $VNAME: addr=$ADDR relayer=${RELAYER_ADDRESSES[$i]} challenger=${CHALLENGER_ADDRESSES[$i]} node_id=$NODE_ID"
 
-  # Add genesis account (to validator-0's genesis which is the template)
-  mocad genesis add-genesis-account "$ADDR" "${GENESIS_ACCOUNT_BALANCE}${DENOM}" \
-    --home "$VALIDATOR_0_HOME" --keyring-backend "$KEYRING" 2>/dev/null || \
-  mocad add-genesis-account "$ADDR" "${GENESIS_ACCOUNT_BALANCE}${DENOM}" \
-    --home "$VALIDATOR_0_HOME" --keyring-backend "$KEYRING" 2>/dev/null || true
+  # Add genesis accounts (validator, relayer, challenger)
+  for GADDR in "$ADDR" "${RELAYER_ADDRESSES[$i]}" "${CHALLENGER_ADDRESSES[$i]}"; do
+    mocad add-genesis-account "$GADDR" "${GENESIS_ACCOUNT_BALANCE}${DENOM}" \
+      --home "$VALIDATOR_0_HOME" --keyring-backend "$KEYRING" 2>/dev/null || true
+  done
 done
 
 # --- Step 4: Generate SP keys and add genesis accounts ---
@@ -144,30 +165,42 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
     cp -r "$VALIDATOR_0_HOME/keyring-test" "$VHOME/" 2>/dev/null || true
   fi
 
-  # Create gentx
-  mocad genesis gentx "$VNAME" "${STAKING_BOND_AMOUNT}${DENOM}" \
-    --chain-id "$CHAIN_ID" \
-    --keyring-backend "$KEYRING" \
+  # Create gentx (moca requires 8 args: key amount validator delegator relayer challenger blsKey blsProof)
+  mocad gentx "$VNAME" \
+    "${STAKING_BOND_AMOUNT}${DENOM}" \
+    "${VALIDATOR_ADDRESSES[$i]}" \
+    "${VALIDATOR_ADDRESSES[$i]}" \
+    "${RELAYER_ADDRESSES[$i]}" \
+    "${CHALLENGER_ADDRESSES[$i]}" \
+    "${BLS_KEYS[$i]}" \
+    "${BLS_PROOFS[$i]}" \
     --home "$VHOME" \
-    --moniker "$VNAME" 2>/dev/null || \
-  mocad gentx "$VNAME" "${STAKING_BOND_AMOUNT}${DENOM}" \
-    --chain-id "$CHAIN_ID" \
-    --keyring-backend "$KEYRING" \
-    --home "$VHOME" \
-    --moniker "$VNAME" 2>/dev/null || true
+    --keyring-backend="$KEYRING" \
+    --chain-id="$CHAIN_ID" \
+    --moniker="$VNAME" \
+    --commission-rate="0.07" \
+    --commission-max-rate="0.10" \
+    --commission-max-change-rate="0.01" \
+    --details="$VNAME" \
+    --gas "" 2>&1
 
   echo "  $VNAME: gentx created"
 done
 
 # Collect gentxs into validator-0's genesis
 echo "--- Collecting gentxs ---"
-for i in $(seq 1 $((NUM_VALIDATORS - 1))); do
+mkdir -p "$VALIDATOR_0_HOME/config/gentx"
+for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
   VHOME="$WORK_DIR/validator-$i"
-  cp "$VHOME/config/gentx/"*.json "$VALIDATOR_0_HOME/config/gentx/" 2>/dev/null || true
+  if [ -d "$VHOME/config/gentx" ]; then
+    cp "$VHOME/config/gentx/"*.json "$VALIDATOR_0_HOME/config/gentx/" 2>/dev/null || true
+    echo "  Copied gentx from validator-$i"
+  fi
 done
+echo "  Gentx files: $(ls "$VALIDATOR_0_HOME/config/gentx/" 2>/dev/null | wc -l)"
 
-mocad genesis collect-gentxs --home "$VALIDATOR_0_HOME" 2>/dev/null || \
-mocad collect-gentxs --home "$VALIDATOR_0_HOME" 2>/dev/null || true
+mocad collect-gentxs --home "$VALIDATOR_0_HOME" 2>&1
+echo "  gen_txs count: $(jq '.app_state.genutil.gen_txs | length' "$VALIDATOR_0_HOME/config/genesis.json")"
 
 # --- Step 6: Generate SP gentxs ---
 echo "--- Step 6: Generate SP gentxs ---"
@@ -193,9 +226,8 @@ mocad genesis collect-spgentxs --home "$VALIDATOR_0_HOME" 2>/dev/null || true
 
 # Validate genesis
 echo "--- Validating genesis ---"
-mocad genesis validate-genesis --home "$VALIDATOR_0_HOME" 2>/dev/null || \
-mocad validate-genesis --home "$VALIDATOR_0_HOME" 2>/dev/null || \
-echo "Warning: genesis validation command not available"
+mocad validate-genesis --home "$VALIDATOR_0_HOME" 2>&1 || \
+echo "Warning: genesis validation failed (may be non-fatal)"
 
 # --- Step 7: Build persistent peers string ---
 echo "--- Step 7: Configure peers ---"
@@ -231,9 +263,11 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
   cp "$VHOME/config/node_key.json" "$VOUT/config/"
   cp "$VHOME/config/priv_validator_key.json" "$VOUT/config/"
 
-  # Copy config.toml and app.toml (from the init)
+  # Copy config.toml, app.toml, and client.toml (from the init)
   cp "$VHOME/config/config.toml" "$VOUT/config/"
   cp "$VHOME/config/app.toml" "$VOUT/config/"
+  cp "$VHOME/config/client.toml" "$VOUT/config/" 2>/dev/null || \
+    echo -e "chain-id = \"${CHAIN_ID}\"\nkeyring-backend = \"test\"\noutput = \"text\"\nnode = \"tcp://localhost:26657\"\nbroadcast-mode = \"sync\"" > "$VOUT/config/client.toml"
 
   # Patch persistent peers into config.toml
   sed -i "s|persistent_peers = \".*\"|persistent_peers = \"${PEERS}\"|" "$VOUT/config/config.toml"

@@ -1,5 +1,7 @@
 # moca-e2e
 
+[![E2E Status](https://github.com/mocachain/moca-e2e/actions/workflows/test-stack.yml/badge.svg?branch=main)](https://github.com/mocachain/moca-e2e/actions/workflows/test-stack.yml)
+
 Cross-repo integration testing hub for the Moca ecosystem. Ensures all components work together by maintaining a **known-good stack pointer** — a tested combination of commit SHAs across all repos.
 
 ## How it works
@@ -7,9 +9,8 @@ Cross-repo integration testing hub for the Moca ecosystem. Ensures all component
 1. When any Moca repo merges to `main`, it fires a `repository_dispatch` to this hub
 2. The hub updates `stack.yaml` with the new SHA and force-pushes a rolling branch
 3. CI runs the full E2E test suite on **both AMD64 and ARM64**
-4. A state determinism check compares app hashes across architectures
-5. If tests pass on both arches, the rolling PR auto-merges — advancing the known-good pointer
-6. If tests fail, the team is notified and the pointer stays at the last known-good state
+4. If tests pass, the rolling PR auto-merges — advancing the known-good pointer
+5. If tests fail, the team is notified and the pointer stays at the last known-good state
 
 ## Quick start
 
@@ -18,6 +19,7 @@ Cross-repo integration testing hub for the Moca ecosystem. Ensures all component
 - [Docker](https://docs.docker.com/get-docker/) (with compose v2)
 - [yq](https://github.com/mikefarah/yq) (`brew install yq`)
 - [jq](https://jqlang.github.io/jq/) (`brew install jq`)
+- [Foundry](https://book.getfoundry.sh/getting-started/installation) (optional, for EVM tests)
 
 ### Run locally
 
@@ -50,7 +52,6 @@ make logs              # Follow service logs
 make ps                # Show running services
 make clone             # Clone repos at stack.yaml refs
 make build             # Build Docker images
-make export-state      # Export state hashes for determinism check
 make validate-stack    # Verify all stack.yaml refs exist
 ```
 
@@ -88,15 +89,6 @@ Available validator modes:
 - `cosmovisor` — `cosmovisor run start` wrapping mocad (tests upgrade paths)
 - `binary` — native binary on host (local dev only)
 
-### State determinism check
-
-CI runs the same topology on both AMD64 and ARM64. After tests, it exports the app hash (merkle root of all chain state) at multiple checkpoint heights. A comparison job then diffs the hashes:
-
-- **Match** = state machine is deterministic across architectures
-- **Mismatch** = architecture-dependent bug (CGO, BLST, floating-point)
-
-This catches subtle non-determinism bugs that would cause consensus failures in mixed-arch validator sets.
-
 ### CI pipeline
 
 ```
@@ -104,11 +96,25 @@ Source repo merges to main
   → repository_dispatch to moca-e2e
   → update-stack.yml: updates stack.yaml, force-pushes rolling branch
   → test-stack.yml:
-      ├── AMD64 runner: build → deploy → test → export state
-      └── ARM64 runner: build → deploy → test → export state
-      └── compare-state: diff app hashes
-  → advance-pointer.yml: auto-merge on green (all 3 jobs pass)
+      ├── AMD64 runner: build → deploy → test
+      └── ARM64 runner: build → deploy → test
+  → advance-pointer.yml: auto-merge on green
 ```
+
+### Test suite
+
+| Test | Modules |
+|------|---------|
+| `smoke_chain_status` | CometBFT — chain reachable, producing blocks |
+| `smoke_validator_set` | Staking — all validators active with voting power |
+| `smoke_sp_status` | SP module — registration query |
+| `test_block_production` | Consensus — block rate over 10s |
+| `test_bank_transfer` | Bank — send tokens, verify balance changes |
+| `test_staking` | Staking — delegate, unbond, verify entries |
+| `test_validator_stake` | Staking — all validators bonded, equal stake |
+| `test_evm_transfer` | EVM — native transfer via JSON-RPC |
+| `test_evm_erc20` | EVM — contract deploy + interact |
+| `test_cross_module` | Bank, Staking, Distribution — sequential txs across modules |
 
 ## Repository structure
 
@@ -116,7 +122,7 @@ Source repo merges to main
 .
 ├── .github/workflows/
 │   ├── update-stack.yml       # Updates stack.yaml on repo dispatch
-│   ├── test-stack.yml         # E2E tests on both arches + state comparison
+│   ├── test-stack.yml         # E2E tests on both arches
 │   ├── advance-pointer.yml    # Auto-merges rolling PR on green CI
 │   └── test-environment.yml   # Manual: test against live environments
 ├── topology/
@@ -134,10 +140,8 @@ Source repo merges to main
 │   ├── generate-compose.sh    # Topology → docker-compose.generated.yml
 │   ├── init-genesis.sh        # Genesis init (keys, accounts, gentxs)
 │   ├── run-tests.sh           # Main entry point
-│   ├── export-state.sh        # Export app hashes for determinism check
-│   ├── compare-state.sh       # Diff state hashes across arches
 │   └── ...                    # clone, build, setup, teardown, wait
-├── tests/                     # E2E test suites
+├── tests/                     # E2E test suites + lib.sh helpers
 ├── notify-template/           # Drop-in workflow for source repos
 ├── stack.yaml                 # Known-good stack pointer
 └── Makefile                   # Local-first entry point
@@ -156,3 +160,11 @@ Add test scripts to `tests/`:
 - `test_*.sh` — full E2E tests, run against local/devnet/testnet only
 
 Each test receives `$1` = environment name, `$2` = config file path.
+
+## Roadmap
+
+- [ ] Slack/Discord notifications on CI failure
+- [ ] Dependency-aware test triggering — when `moca-cosmos-sdk` changes, only re-test repos that import it rather than the full matrix. Requires mapping the dependency graph between repos so the hub can make smarter decisions about what to test and skip.
+- [ ] SP operation tests (bucket create, object put/get)
+- [ ] Governance proposal E2E tests
+- [ ] Upgrade path testing (old binary → new binary via cosmovisor)

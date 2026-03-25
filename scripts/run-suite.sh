@@ -24,6 +24,8 @@ ERRORS=""
 for test_file in "$TESTS_DIR"/$TEST_PATTERN; do
   [ -f "$test_file" ] || continue
   test_name=$(basename "$test_file")
+  # Skip helper libraries
+  [ "$test_name" = "lib.sh" ] && continue
   echo ""
   echo "--- Running: $test_name"
 

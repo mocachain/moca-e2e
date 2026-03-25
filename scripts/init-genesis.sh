@@ -115,6 +115,21 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
   done
 done
 
+# --- Step 3b: Create test accounts with known keys ---
+echo "--- Step 3b: Create test accounts ---"
+
+# Test account with a deterministic key (for E2E transaction tests)
+# This key is publicly known — NEVER use in production
+TEST_MNEMONIC="test test test test test test test test test test test junk"
+echo "$TEST_MNEMONIC" | mocad keys add testaccount --recover --keyring-backend "$KEYRING" --home "$VALIDATOR_0_HOME" 2>/dev/null
+TEST_ADDR=$(mocad keys show testaccount -a --keyring-backend "$KEYRING" --home "$VALIDATOR_0_HOME")
+TEST_PRIVKEY=$(mocad keys unsafe-export-eth-key testaccount --keyring-backend "$KEYRING" --home "$VALIDATOR_0_HOME" 2>/dev/null || echo "")
+
+mocad add-genesis-account "$TEST_ADDR" "${GENESIS_ACCOUNT_BALANCE}${DENOM}" \
+  --home "$VALIDATOR_0_HOME" --keyring-backend "$KEYRING" 2>/dev/null || true
+
+echo "  testaccount: addr=$TEST_ADDR"
+
 # --- Step 4: Generate SP keys and add genesis accounts ---
 echo "--- Step 4: Generate SP keys ---"
 
@@ -357,8 +372,13 @@ cat > "$OUTPUT_DIR/metadata.json" <<META
 {
   "chain_id": "${CHAIN_ID}",
   "denom": "${DENOM}",
+  "evm_chain_id": $(echo "$CHAIN_ID" | grep -oP '\d+' | head -1),
   "num_validators": ${NUM_VALIDATORS},
   "num_sps": ${NUM_SPS},
+  "test_account": {
+    "address": "${TEST_ADDR}",
+    "evm_privkey": "${TEST_PRIVKEY}"
+  },
   "validators": [
 $(for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
   COMMA=""

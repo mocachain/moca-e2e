@@ -81,14 +81,33 @@ jobs:
       - name: Run E2E tests
         run: ./scripts/run-suite.sh local config/local.yaml
 
-      - name: Collect logs on failure
-        if: failure()
+      - name: Collect logs
+        if: always()
         run: |
           mkdir -p test-results/logs
-          docker compose -f docker-compose.generated.yml logs > test-results/logs/all-${{ matrix.arch }}.log 2>&1 || true
+          COMPOSE="docker compose -f docker-compose.generated.yml"
+
+          # Per-service logs
+          for svc in $($COMPOSE config --services 2>/dev/null); do
+            $COMPOSE logs "$svc" > "test-results/logs/${svc}.log" 2>&1 || true
+          done
+
+          # Combined log
+          $COMPOSE logs > test-results/logs/all.log 2>&1 || true
+
+          # Container status
+          $COMPOSE ps -a > test-results/logs/containers.txt 2>&1 || true
+
+          # Grep for critical errors across all logs
+          echo "=== Critical errors ===" | tee test-results/logs/errors-summary.txt
+          grep -ihE "ERR|panic|CONSENSUS FAILURE|validator set is empty|invalid chain-id|fatal" \
+            test-results/logs/*.log 2>/dev/null \
+            | grep -v "log_level" \
+            | sort -u \
+            | tee -a test-results/logs/errors-summary.txt || echo "No critical errors found"
 
       - name: Upload test results
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.arch }}

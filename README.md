@@ -115,6 +115,20 @@ Source repo merges to main
 | `test_evm_transfer` | EVM — native transfer via JSON-RPC |
 | `test_evm_erc20` | EVM — contract deploy + interact |
 | `test_cross_module` | Bank, Staking, Distribution — sequential txs across modules |
+| `test_storage_bucket` | Storage — bucket create/query/delete via `mocad`; if `moca-cmd` is available, full bucket CLI flow |
+| `test_storage_object` | Storage — object put/head via `moca-cmd` (skipped if client unavailable) |
+| `test_storage_group` | Storage — group lifecycle via `mocad`; if `moca-cmd` is available, full group CLI flow |
+| `test_storage_policy` | Storage — policy operations |
+| `test_payment` | Storage — payment flows |
+| `test_sp_gateway` | SP — HTTP gateway reachability |
+| `test_sp_registration` | SP — on-chain registration checks |
+| `test_sp_params` | SP — module params |
+| `test_sp_diagnose` | SP — containers + gateway smoke diagnosis |
+| `test_sp_config` | SP — config.toml sanity checks from a running SP container |
+| `test_sp_join` | SP — chain registrations vs `moca-cmd sp ls` when available |
+| `test_sp_exit` | SP — read-only preconditions for exit flows |
+
+`tests/lib.sh` exposes `resolve_moca_cmd` / `exec_moca_cmd` for optional `moca-cmd` in Docker (`moca-cmd` container) or on `PATH`.
 
 ## Repository structure
 
@@ -165,6 +179,6 @@ Each test receives `$1` = environment name, `$2` = config file path.
 
 - [ ] Slack/Discord notifications on CI failure
 - [ ] Dependency-aware test triggering — when `moca-cosmos-sdk` changes, only re-test repos that import it rather than the full matrix. Requires mapping the dependency graph between repos so the hub can make smarter decisions about what to test and skip.
-- [ ] SP operation tests (bucket create, object put/get)
+- [x] SP / storage CLI tests (`test_storage_*`, `test_sp_*`) when `moca-cmd` and SPs are available
 - [ ] Governance proposal E2E tests
 - [ ] Upgrade path testing (old binary → new binary via cosmovisor)

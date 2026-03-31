@@ -89,3 +89,27 @@ assert_ne() {
     return 1
   fi
 }
+
+# --- moca-cmd helpers (optional, best-effort) ---
+resolve_moca_cmd() {
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^moca-cmd$'; then
+    echo "docker:moca-cmd"
+    return 0
+  fi
+  if command -v moca-cmd >/dev/null 2>&1; then
+    echo "local:moca-cmd"
+    return 0
+  fi
+  return 1
+}
+
+exec_moca_cmd() {
+  local target
+  target="$(resolve_moca_cmd 2>/dev/null)" || return 127
+  if [[ "$target" == docker:* ]]; then
+    local container="${target#docker:}"
+    docker exec "$container" moca-cmd "$@" 2>/dev/null
+    return $?
+  fi
+  moca-cmd "$@" 2>/dev/null
+}

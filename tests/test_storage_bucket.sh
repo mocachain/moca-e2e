@@ -15,7 +15,8 @@ if [ "$ENV" = "mainnet" ]; then echo "SKIP: not safe for mainnet"; exit 0; fi
 if [ "$ENV" != "local" ]; then echo "SKIP: bucket test only on local"; exit 0; fi
 
 SP_CHECK=$(exec_mocad query sp storage-providers --node tcp://localhost:26657 --output json 2>/dev/null || echo "")
-NUM_SPS=$(echo "$SP_CHECK" | jq '.sps | length // 0' 2>/dev/null || echo "0")
+NUM_SPS=$(echo "$SP_CHECK" | jq -r '.sps | length // 0' 2>/dev/null || echo "0")
+NUM_SPS="${NUM_SPS:-0}"
 
 if [ "$NUM_SPS" -le 0 ]; then
   echo "SKIP: no SPs registered — bucket operations need at least one SP"

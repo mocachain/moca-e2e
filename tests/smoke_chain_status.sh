@@ -4,12 +4,7 @@ set -euo pipefail
 
 ENV="${1:-local}"
 CONFIG_FILE="${2:-config/local.yaml}"
-
-if [ "$ENV" = "local" ]; then
-  RPC="http://localhost:26657"
-else
-  RPC=$(yq '.chain.rpc' "$CONFIG_FILE")
-fi
+RPC="${RPC:-$(yq -r '.chain.rpc // ""' "$CONFIG_FILE" 2>/dev/null || true)}"
 
 if [ -z "$RPC" ] || [ "$RPC" = "null" ] || [ "$RPC" = '""' ]; then
   echo "SKIP: RPC not configured for $ENV"

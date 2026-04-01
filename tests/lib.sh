@@ -8,12 +8,44 @@ EVM_CHAIN_ID="${EVM_CHAIN_ID:-5151}"
 RPC="${RPC:-http://localhost:26657}"
 REST="${REST:-http://localhost:1317}"
 EVM_RPC="${EVM_RPC:-http://localhost:8545}"
+TM_RPC="${TM_RPC:-$RPC}"
 FEES="${FEES:-200000000000000amoca}"
 VALIDATOR_CONTAINER="${VALIDATOR_CONTAINER:-validator-0}"
 
-# --- Docker exec into validator ---
+# Cosmos CLI prefers tcp:// for local CometBFT RPC.
+if [[ "$TM_RPC" == http://* ]]; then
+  TM_RPC="tcp://${TM_RPC#http://}"
+fi
+
+# --- Runtime policy helpers ---
+writes_allowed() {
+  [ "${ENV:-local}" = "local" ] || [ "${ALLOW_WRITES:-0}" = "1" ] || [ "${E2E_ALLOW_WRITES:-0}" = "1" ]
+}
+
+require_write_enabled() {
+  local test_name="${1:-write test}"
+  if [ "${ENV:-}" = "mainnet" ]; then
+    echo "SKIP: not safe for mainnet"
+    exit 0
+  fi
+  if ! writes_allowed; then
+    echo "SKIP: ${test_name} requires writes; set ALLOW_WRITES=1 to enable on ${ENV:-unknown}"
+    exit 0
+  fi
+}
+
+# --- Execute mocad either from docker validator or local PATH ---
 exec_mocad() {
-  docker exec "$VALIDATOR_CONTAINER" mocad "$@" --home /root/.mocad 2>/dev/null
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${VALIDATOR_CONTAINER}$"; then
+    docker exec "$VALIDATOR_CONTAINER" mocad "$@" --home /root/.mocad 2>/dev/null
+    return $?
+  fi
+  if command -v mocad >/dev/null 2>&1; then
+    mocad "$@" 2>/dev/null
+    return $?
+  fi
+  echo "ERROR: mocad not found (no ${VALIDATOR_CONTAINER} container and no local mocad on PATH)" >&2
+  return 127
 }
 
 # --- Query helpers ---
@@ -28,7 +60,7 @@ get_block_height() {
 }
 
 get_validators_json() {
-  exec_mocad query staking validators --node tcp://localhost:26657 --output json 2>/dev/null
+  exec_mocad query staking validators --node "$TM_RPC" --output json 2>/dev/null || echo "{}"
 }
 
 get_validator_count() {
@@ -48,7 +80,7 @@ cosmos_tx() {
   exec_mocad tx "$@" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
-    --node tcp://localhost:26657 \
+    --node "$TM_RPC" \
     --fees "$FEES" \
     -y 2>/dev/null
   sleep 3
@@ -163,7 +195,7 @@ wait_for_block() {
 # First IN_SERVICE SP operator from chain JSON (not moca-cmd output).
 first_in_service_sp_operator() {
   local json addr
-  json="$(exec_mocad query sp storage-providers --node tcp://localhost:26657 --output json 2>/dev/null || echo "")"
+  json="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "")"
   if [ -z "$json" ]; then
     return 1
   fi
@@ -178,7 +210,7 @@ first_in_service_sp_operator() {
 # SP endpoint URL from first IN_SERVICE SP (http/https).
 first_in_service_sp_endpoint() {
   local json ep
-  json="$(exec_mocad query sp storage-providers --node tcp://localhost:26657 --output json 2>/dev/null || echo "")"
+  json="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "")"
   if [ -z "$json" ]; then
     return 1
   fi

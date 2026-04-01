@@ -9,8 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
 source "$SCRIPT_DIR/lib.sh"
 
-if [ "$ENV" = "mainnet" ]; then echo "SKIP: not safe for mainnet"; exit 0; fi
-if [ "$ENV" != "local" ]; then echo "SKIP: payment test only on local"; exit 0; fi
+require_write_enabled "payment test"
 
 OWNER_ADDR=$(exec_mocad keys show testaccount -a --keyring-backend test 2>/dev/null || echo "")
 
@@ -84,7 +83,7 @@ run_mocad_payment() {
     --from testaccount \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
-    --node tcp://localhost:26657 \
+    --node "$TM_RPC" \
     --fees "$FEES" \
     -y 2>/dev/null || echo "FAILED")
 
@@ -101,7 +100,7 @@ run_mocad_payment() {
   fi
 
   ACCOUNTS=$(exec_mocad query payment get-payment-accounts-by-owner "$OWNER_ADDR" \
-    --node tcp://localhost:26657 --output json 2>/dev/null || echo "")
+    --node "$TM_RPC" --output json 2>/dev/null || echo "")
   NUM_ACCOUNTS=$(echo "$ACCOUNTS" | jq '.payment_accounts | length // 0' 2>/dev/null || echo "0")
   echo "  payment accounts for owner: $NUM_ACCOUNTS"
 
@@ -114,7 +113,7 @@ run_mocad_payment() {
   echo "  payment account: $PA_ADDR"
 
   STREAM=$(exec_mocad query payment stream-record "$PA_ADDR" \
-    --node tcp://localhost:26657 --output json 2>/dev/null || echo "")
+    --node "$TM_RPC" --output json 2>/dev/null || echo "")
   if [ -n "$STREAM" ]; then
     BALANCE=$(echo "$STREAM" | jq -r '.stream_record.static_balance // "0"' 2>/dev/null)
     echo "  stream balance: $BALANCE"
@@ -125,13 +124,13 @@ run_mocad_payment() {
     --from testaccount \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
-    --node tcp://localhost:26657 \
+    --node "$TM_RPC" \
     --fees "$FEES" \
     -y 2>/dev/null || echo "  WARN: deposit may have failed"
   wait_for_tx 5
 
   STREAM_AFTER=$(exec_mocad query payment stream-record "$PA_ADDR" \
-    --node tcp://localhost:26657 --output json 2>/dev/null || echo "")
+    --node "$TM_RPC" --output json 2>/dev/null || echo "")
   BALANCE_AFTER=$(echo "$STREAM_AFTER" | jq -r '.stream_record.static_balance // "0"' 2>/dev/null)
   echo "  stream balance after deposit: $BALANCE_AFTER"
 
@@ -140,7 +139,7 @@ run_mocad_payment() {
     --from testaccount \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
-    --node tcp://localhost:26657 \
+    --node "$TM_RPC" \
     --fees "$FEES" \
     -y 2>/dev/null || echo "  WARN: withdraw may have failed"
   wait_for_tx 3

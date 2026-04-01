@@ -10,10 +10,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
 source "$SCRIPT_DIR/lib.sh"
 
-if [ "$ENV" = "mainnet" ]; then echo "SKIP: not safe for mainnet"; exit 0; fi
-if [ "$ENV" != "local" ]; then echo "SKIP: object test only on local"; exit 0; fi
+require_write_enabled "storage object test"
 
-SP_CHECK=$(exec_mocad query sp storage-providers --node tcp://localhost:26657 --output json 2>/dev/null || echo "")
+SP_CHECK=$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "")
 NUM_SPS=$(echo "$SP_CHECK" | jq -r '.sps | length // 0' 2>/dev/null || echo "0")
 NUM_SPS="${NUM_SPS:-0}"
 if [ "$NUM_SPS" -le 0 ]; then
@@ -40,7 +39,7 @@ run_mocad_object_smoke() {
     --from testaccount \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
-    --node tcp://localhost:26657 \
+    --node "$TM_RPC" \
     --fees "$FEES" \
     -y 2>/dev/null || echo "FAILED")
   if echo "$cr" | grep -q "FAILED\|Error\|error"; then
@@ -48,12 +47,12 @@ run_mocad_object_smoke() {
     exit 0
   fi
   wait_for_tx 5
-  exec_mocad query storage head-bucket "$bucket_name" --node tcp://localhost:26657 --output json 2>/dev/null | jq -r '.bucket_info.bucket_name // empty' || true
+  exec_mocad query storage head-bucket "$bucket_name" --node "$TM_RPC" --output json 2>/dev/null | jq -r '.bucket_info.bucket_name // empty' || true
   exec_mocad tx storage delete-bucket "$bucket_name" \
     --from testaccount \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
-    --node tcp://localhost:26657 \
+    --node "$TM_RPC" \
     --fees "$FEES" \
     -y 2>/dev/null || true
   echo "PASS: storage object fallback (bucket smoke only; use moca-cmd for full flow)"

@@ -16,7 +16,7 @@ if ! resolve_moca_cmd >/dev/null 2>&1; then
   exit 0
 fi
 
-SP_JSON="$(exec_mocad query sp storage-providers --node tcp://localhost:26657 --output json 2>/dev/null || echo '{}')"
+SP_JSON="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo '{}')"
 NUM="$(echo "$SP_JSON" | jq -r '.sps | length // 0' 2>/dev/null || echo "0")"
 if [ "$NUM" -le 0 ]; then
   echo "SKIP: no SP on chain"

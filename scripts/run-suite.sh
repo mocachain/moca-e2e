@@ -9,6 +9,29 @@ TESTS_DIR="$ROOT_DIR/tests"
 
 echo "=== E2E Test Suite: $ENV ==="
 
+# Export per-environment endpoints for all test scripts.
+if [ -f "$CONFIG_FILE" ]; then
+  CHAIN_ID_VALUE="$(yq -r '.chain.chain_id // ""' "$CONFIG_FILE" 2>/dev/null || true)"
+  RPC_VALUE="$(yq -r '.chain.rpc // ""' "$CONFIG_FILE" 2>/dev/null || true)"
+  REST_VALUE="$(yq -r '.chain.rest // .chain.api // ""' "$CONFIG_FILE" 2>/dev/null || true)"
+  EVM_RPC_VALUE="$(yq -r '.chain.evm_rpc // ""' "$CONFIG_FILE" 2>/dev/null || true)"
+
+  [ -n "$CHAIN_ID_VALUE" ] && [ "$CHAIN_ID_VALUE" != "null" ] && export CHAIN_ID="$CHAIN_ID_VALUE"
+  [ -n "$RPC_VALUE" ] && [ "$RPC_VALUE" != "null" ] && export RPC="$RPC_VALUE"
+  [ -n "$REST_VALUE" ] && [ "$REST_VALUE" != "null" ] && export REST="$REST_VALUE"
+  [ -n "$EVM_RPC_VALUE" ] && [ "$EVM_RPC_VALUE" != "null" ] && export EVM_RPC="$EVM_RPC_VALUE"
+fi
+
+echo "  CHAIN_ID=${CHAIN_ID:-<default>}"
+echo "  RPC=${RPC:-<default>}"
+echo "  REST=${REST:-<default>}"
+echo "  EVM_RPC=${EVM_RPC:-<default>}"
+if [ "${ALLOW_WRITES:-0}" = "1" ] || [ "${E2E_ALLOW_WRITES:-0}" = "1" ]; then
+  echo "  Writes: enabled (ALLOW_WRITES=1)"
+else
+  echo "  Writes: disabled for non-local envs (set ALLOW_WRITES=1 to override)"
+fi
+
 # Determine which test suites to run based on environment
 if [ "$ENV" = "mainnet" ]; then
   echo "Mainnet: running smoke tests only (readonly)"

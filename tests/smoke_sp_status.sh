@@ -4,12 +4,7 @@ set -euo pipefail
 
 ENV="${1:-local}"
 CONFIG_FILE="${2:-config/local.yaml}"
-
-if [ "$ENV" = "local" ]; then
-  REST="http://localhost:1317"
-else
-  REST=$(yq '.chain.rest' "$CONFIG_FILE")
-fi
+REST="${REST:-$(yq -r '.chain.rest // .chain.api // ""' "$CONFIG_FILE" 2>/dev/null || true)}"
 
 if [ -z "$REST" ] || [ "$REST" = "null" ] || [ "$REST" = '""' ]; then
   echo "SKIP: REST not configured for $ENV"

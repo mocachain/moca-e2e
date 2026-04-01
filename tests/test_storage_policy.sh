@@ -9,8 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
 source "$SCRIPT_DIR/lib.sh"
 
-if [ "$ENV" = "mainnet" ]; then echo "SKIP: not safe for mainnet"; exit 0; fi
-if [ "$ENV" != "local" ]; then echo "SKIP: policy test only on local"; exit 0; fi
+require_write_enabled "storage policy test"
 
 OWNER_ADDR=$(exec_mocad keys show testaccount -a --keyring-backend test 2>/dev/null || echo "")
 GRANTEE_ADDR=$(exec_mocad keys show validator-0 -a --keyring-backend test 2>/dev/null || echo "")
@@ -26,7 +25,7 @@ if [ -z "$PERM_CHECK" ]; then
   exit 0
 fi
 
-SP_JSON=$(exec_mocad query sp storage-providers --node tcp://localhost:26657 --output json 2>/dev/null || echo "{}")
+SP_JSON=$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "{}")
 NUM_SPS=$(echo "$SP_JSON" | jq '.sps | length // 0' 2>/dev/null || echo "0")
 if [ "$NUM_SPS" -le 0 ]; then
   echo "SKIP: no SPs registered"
@@ -45,7 +44,7 @@ run_mocad_policy() {
     --from testaccount \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
-    --node tcp://localhost:26657 \
+    --node "$TM_RPC" \
     --fees "$FEES" \
     -y 2>/dev/null || {
     echo "PASS: policy mocad path (bucket create failed)"
@@ -59,7 +58,7 @@ run_mocad_policy() {
     --from testaccount \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
-    --node tcp://localhost:26657 \
+    --node "$TM_RPC" \
     --fees "$FEES" \
     -y 2>/dev/null || true
   wait_for_tx 3
@@ -68,7 +67,7 @@ run_mocad_policy() {
     --from testaccount \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
-    --node tcp://localhost:26657 \
+    --node "$TM_RPC" \
     --fees "$FEES" \
     -y 2>/dev/null || true
   echo "PASS: storage permission policy (mocad path)"
@@ -166,7 +165,7 @@ run_moca_cmd_policy_full() {
 
 echo "Testing storage permission policies..."
 
-PERM_PARAMS=$(exec_mocad query permission params --node tcp://localhost:26657 --output json 2>/dev/null || echo "")
+PERM_PARAMS=$(exec_mocad query permission params --node "$TM_RPC" --output json 2>/dev/null || echo "")
 if [ -n "$PERM_PARAMS" ] && [ "$PERM_PARAMS" != "{}" ]; then
   echo "  permission params ok"
 fi

@@ -11,10 +11,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
 source "$SCRIPT_DIR/lib.sh"
 
-if [ "$ENV" = "mainnet" ]; then echo "SKIP: not safe for mainnet"; exit 0; fi
-if [ "$ENV" != "local" ]; then echo "SKIP: bucket test only on local"; exit 0; fi
+require_write_enabled "storage bucket test"
 
-SP_CHECK=$(exec_mocad query sp storage-providers --node tcp://localhost:26657 --output json 2>/dev/null || echo "")
+SP_CHECK=$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "")
 NUM_SPS=$(echo "$SP_CHECK" | jq -r '.sps | length // 0' 2>/dev/null || echo "0")
 NUM_SPS="${NUM_SPS:-0}"
 
@@ -43,7 +42,7 @@ run_mocad_bucket_smoke() {
     --from testaccount \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
-    --node tcp://localhost:26657 \
+    --node "$TM_RPC" \
     --fees "$FEES" \
     -y 2>/dev/null || echo "FAILED")
 
@@ -58,7 +57,7 @@ run_mocad_bucket_smoke() {
   echo "  Querying bucket..."
   local bucket_info
   bucket_info=$(exec_mocad query storage head-bucket "$bucket_name" \
-    --node tcp://localhost:26657 --output json 2>/dev/null || echo "")
+    --node "$TM_RPC" --output json 2>/dev/null || echo "")
   if [ -n "$bucket_info" ] && echo "$bucket_info" | jq -e '.bucket_info' >/dev/null 2>&1; then
     echo "  head-bucket: ok"
   else
@@ -70,7 +69,7 @@ run_mocad_bucket_smoke() {
     --from testaccount \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
-    --node tcp://localhost:26657 \
+    --node "$TM_RPC" \
     --fees "$FEES" \
     -y 2>/dev/null || true
   wait_for_tx 3

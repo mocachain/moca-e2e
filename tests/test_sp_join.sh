@@ -13,7 +13,7 @@ if [ "$ENV" != "local" ]; then echo "SKIP: SP join test only on local"; exit 0; 
 
 echo "Testing SP join visibility (comprehensive)..."
 
-CHAIN_JSON="$(exec_mocad query sp storage-providers --node tcp://localhost:26657 --output json 2>/dev/null || echo '{}')"
+CHAIN_JSON="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo '{}')"
 CHAIN_SP_COUNT="$(echo "$CHAIN_JSON" | jq -r '.sps | length // 0' 2>/dev/null || echo "0")"
 if [ "$CHAIN_SP_COUNT" -le 0 ]; then
   echo "SKIP: chain has no SP registrations"
@@ -39,7 +39,7 @@ for i in $(seq 0 $((CHAIN_SP_COUNT - 1))); do
     echo "    WARN: status not IN_SERVICE: $ST"
   fi
 
-  Q=$(exec_mocad query sp storage-provider-by-operator-address "$OP" --node tcp://localhost:26657 --output json 2>/dev/null || echo "")
+  Q=$(exec_mocad query sp storage-provider-by-operator-address "$OP" --node "$TM_RPC" --output json 2>/dev/null || echo "")
   if [ -z "$Q" ] || [ "$Q" = "null" ]; then
     echo "    WARN: storage-provider-by-operator-address query empty"
   else

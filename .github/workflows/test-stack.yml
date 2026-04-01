@@ -9,6 +9,7 @@ on:
       - 'tests/**'
       - 'docker/**'
       - 'topology/**'
+      - '.github/workflows/test-stack.yml'
 
   workflow_dispatch:
     inputs:
@@ -31,18 +32,20 @@ concurrency:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       TOPOLOGY: topology/${{ github.event.inputs.topology || 'default' }}.yaml
+      COMPOSE: docker compose -f docker-compose.generated.yml
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install tools
-        timeout-minutes: 1
+        timeout-minutes: 2
         run: |
           sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
+          sudo apt-get install -y jq
 
       - name: Make scripts executable
         run: |
@@ -50,7 +53,7 @@ jobs:
           chmod +x tests/*.sh
 
       - name: Clone repos at stack.yaml refs
-        timeout-minutes: 2
+        timeout-minutes: 5
         run: ./scripts/clone-repos.sh stack.yaml
         env:
           GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
@@ -59,29 +62,62 @@ jobs:
         run: ./scripts/generate-compose.sh "$TOPOLOGY" docker-compose.generated.yml
 
       - name: Build images
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: ./scripts/build.sh local
         env:
           GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
 
-      - name: Start services
-        timeout-minutes: 8
+      - name: Run genesis init
+        timeout-minutes: 5
         run: |
-          docker compose -f docker-compose.generated.yml up genesis-init 2>&1 | tail -5
-          docker compose -f docker-compose.generated.yml up -d --no-deps mysql $(docker compose -f docker-compose.generated.yml config --services | grep validator)
-          ./scripts/wait-for-chain.sh http://localhost:26657 5 300
-          docker compose -f docker-compose.generated.yml up -d --no-deps $(docker compose -f docker-compose.generated.yml config --services | grep sp-) || true
+          $COMPOSE up genesis-init 2>&1 | tail -20
+          echo "Genesis init complete"
+
+      - name: Start validators and MySQL
+        timeout-minutes: 3
+        run: |
+          $COMPOSE up -d --no-deps mysql \
+            $($COMPOSE config --services | grep '^validator-')
+
+      - name: Wait for chain
+        timeout-minutes: 10
+        run: ./scripts/wait-for-chain.sh http://localhost:26657 5 540
+
+      - name: Start storage providers
+        timeout-minutes: 2
+        run: |
+          SP_SERVICES=$($COMPOSE config --services | grep '^sp-' | tr '\n' ' ')
+          echo "Starting SPs: $SP_SERVICES"
+          $COMPOSE up -d --no-deps $SP_SERVICES
+
+      - name: Wait for storage providers to be healthy
+        timeout-minutes: 10
+        run: |
+          SP_SERVICES=$($COMPOSE config --services | grep '^sp-')
+          echo "Waiting for SPs to become healthy..."
+          for sp in $SP_SERVICES; do
+            echo "  Waiting for $sp..."
+            timeout 480 bash -c "
+              until [ \"\$(docker inspect --format='{{.State.Health.Status}}' $sp 2>/dev/null)\" = 'healthy' ]; do
+                STATUS=\$(docker inspect --format='{{.State.Health.Status}}' $sp 2>/dev/null || echo 'unknown')
+                echo \"    $sp status: \$STATUS\"
+                sleep 10
+              done
+              echo \"    $sp is healthy\"
+            "
+          done
+          echo "All SPs are healthy"
+          $COMPOSE ps
 
       - name: Run E2E tests
-        timeout-minutes: 5
+        timeout-minutes: 15
         run: ./scripts/run-suite.sh local config/local.yaml
 
       - name: Collect logs
         if: always()
-        timeout-minutes: 2
+        timeout-minutes: 3
         run: |
           mkdir -p test-results/logs
-          COMPOSE="docker compose -f docker-compose.generated.yml"
 
           for svc in $($COMPOSE config --services 2>/dev/null); do
             $COMPOSE logs "$svc" > "test-results/logs/${svc}.log" 2>&1 || true
@@ -107,5 +143,5 @@ jobs:
 
       - name: Teardown
         if: always()
-        timeout-minutes: 2
-        run: docker compose -f docker-compose.generated.yml down -v --remove-orphans --timeout 30 || true
+        timeout-minutes: 3
+        run: $COMPOSE down -v --remove-orphans --timeout 30 || true

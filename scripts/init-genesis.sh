@@ -135,6 +135,12 @@ echo "--- Step 4: Generate SP keys ---"
 
 declare -A SP_OPERATOR_ADDRS
 declare -A SP_FUND_ADDRS
+declare -A SP_SEAL_ADDRS
+declare -A SP_APPROVAL_ADDRS
+declare -A SP_GC_ADDRS
+declare -A SP_MAINTENANCE_ADDRS
+declare -A SP_BLS_KEYS
+declare -A SP_BLS_PROOFS
 
 for i in $(seq 0 $((NUM_SPS - 1))); do
   SPNAME="sp-$i"
@@ -147,11 +153,14 @@ for i in $(seq 0 $((NUM_SPS - 1))); do
     mocad keys add "$KEYNAME" --keyring-backend "$KEYRING" --home "$VALIDATOR_0_HOME" 2>/dev/null
     KADDR=$(mocad keys show "$KEYNAME" -a --keyring-backend "$KEYRING" --home "$VALIDATOR_0_HOME")
 
-    if [ "$keytype" = "operator" ]; then
-      SP_OPERATOR_ADDRS[$i]="$KADDR"
-    elif [ "$keytype" = "fund" ]; then
-      SP_FUND_ADDRS[$i]="$KADDR"
-    fi
+    case "$keytype" in
+      operator)     SP_OPERATOR_ADDRS[$i]="$KADDR" ;;
+      fund)         SP_FUND_ADDRS[$i]="$KADDR" ;;
+      seal)         SP_SEAL_ADDRS[$i]="$KADDR" ;;
+      approval)     SP_APPROVAL_ADDRS[$i]="$KADDR" ;;
+      gc)           SP_GC_ADDRS[$i]="$KADDR" ;;
+      maintenance)  SP_MAINTENANCE_ADDRS[$i]="$KADDR" ;;
+    esac
 
     # Add genesis account
     mocad genesis add-genesis-account "$KADDR" "${GENESIS_ACCOUNT_BALANCE}${DENOM}" \
@@ -162,8 +171,10 @@ for i in $(seq 0 $((NUM_SPS - 1))); do
 
   # BLS key for SP
   mocad keys add "${SPNAME}-bls" --keyring-backend "$KEYRING" --home "$VALIDATOR_0_HOME" --algo eth_bls 2>/dev/null || true
+  SP_BLS_KEYS[$i]=$(mocad keys show "${SPNAME}-bls" --keyring-backend "$KEYRING" --home "$VALIDATOR_0_HOME" --output json 2>/dev/null | jq -r .pubkey_hex 2>/dev/null || echo "")
+  SP_BLS_PROOFS[$i]=$(mocad keys sign "${SP_BLS_KEYS[$i]}" --from "${SPNAME}-bls" --keyring-backend "$KEYRING" --home "$VALIDATOR_0_HOME" 2>/dev/null || echo "")
 
-  echo "  $SPNAME: operator=${SP_OPERATOR_ADDRS[$i]}"
+  echo "  $SPNAME: operator=${SP_OPERATOR_ADDRS[$i]} fund=${SP_FUND_ADDRS[$i]}"
 done
 
 # --- Step 5: Generate gentxs ---
@@ -219,25 +230,52 @@ echo "  gen_txs count: $(jq '.app_state.genutil.gen_txs | length' "$VALIDATOR_0_
 
 # --- Step 6: Generate SP gentxs ---
 echo "--- Step 6: Generate SP gentxs ---"
+SP_GENTX_DIR="$VALIDATOR_0_HOME/config/spgentx"
+mkdir -p "$SP_GENTX_DIR"
+
 for i in $(seq 0 $((NUM_SPS - 1))); do
   SPNAME="sp-$i"
   ENDPOINT="http://${SPNAME}:9033"
+  SP_GENTX_FILE="$SP_GENTX_DIR/gentx-${SPNAME}.json"
 
-  # Try spgentx (exact command depends on moca version)
-  mocad spgentx "$SPNAME" \
-    "${SP_MIN_DEPOSIT}${DENOM}" \
-    --chain-id "$CHAIN_ID" \
-    --home "$VALIDATOR_0_HOME" \
-    --keyring-backend "$KEYRING" \
-    --sp-operator-address "${SP_OPERATOR_ADDRS[$i]}" \
-    --sp-fund-address "${SP_FUND_ADDRS[$i]}" \
-    --endpoint "$ENDPOINT" 2>/dev/null || echo "  Warning: spgentx for $SPNAME may need manual setup"
+  SPGENTX_ARGS=(
+    "${SPNAME}-operator"
+    "${SP_MIN_DEPOSIT}${DENOM}"
+    --chain-id "$CHAIN_ID"
+    --home "$VALIDATOR_0_HOME"
+    --keyring-backend "$KEYRING"
+    --operator-address "${SP_OPERATOR_ADDRS[$i]}"
+    --funding-address "${SP_FUND_ADDRS[$i]}"
+    --seal-address "${SP_SEAL_ADDRS[$i]}"
+    --approval-address "${SP_APPROVAL_ADDRS[$i]}"
+    --gc-address "${SP_GC_ADDRS[$i]}"
+    --maintenance-address "${SP_MAINTENANCE_ADDRS[$i]}"
+    --creator "${SP_OPERATOR_ADDRS[$i]}"
+    --moniker "$SPNAME"
+    --endpoint "$ENDPOINT"
+    --output-document "$SP_GENTX_FILE"
+    --gas ""
+  )
 
-  echo "  $SPNAME: spgentx created"
+  # Add BLS key/proof if available
+  if [ -n "${SP_BLS_KEYS[$i]:-}" ] && [ "${SP_BLS_KEYS[$i]}" != "null" ]; then
+    SPGENTX_ARGS+=(--bls-pub-key "${SP_BLS_KEYS[$i]}")
+  fi
+  if [ -n "${SP_BLS_PROOFS[$i]:-}" ]; then
+    SPGENTX_ARGS+=(--bls-proof "${SP_BLS_PROOFS[$i]}")
+  fi
+
+  if mocad spgentx "${SPGENTX_ARGS[@]}" 2>&1; then
+    echo "  $SPNAME: spgentx created -> $SP_GENTX_FILE"
+  else
+    echo "  Warning: spgentx for $SPNAME failed"
+  fi
 done
 
-# Collect SP gentxs
-mocad genesis collect-spgentxs --home "$VALIDATOR_0_HOME" 2>/dev/null || true
+# Collect SP gentxs into genesis
+echo "  SP gentx files: $(ls "$SP_GENTX_DIR/gentx-sp-"*.json 2>/dev/null | wc -l)"
+mocad collect-spgentxs --home "$VALIDATOR_0_HOME" --gentx-dir "$SP_GENTX_DIR" 2>&1 || \
+  echo "Warning: collect-spgentxs failed (may be non-fatal)"
 
 # Validate genesis
 echo "--- Validating genesis ---"
@@ -319,50 +357,24 @@ for i in $(seq 0 $((NUM_SPS - 1))); do
   SPOUT="$OUTPUT_DIR/$SPNAME"
   mkdir -p "$SPOUT"
 
-  # Export SP keys from validator-0's keyring
+  # Export SP keys from validator-0's keyring (pad to 64 hex chars to preserve leading zeros)
   for keytype in operator fund seal approval gc maintenance; do
     KEYNAME="${SPNAME}-${keytype}"
-    PRIVKEY=$(mocad keys export "$KEYNAME" --unarmored-hex --unsafe \
-      --keyring-backend "$KEYRING" --home "$VALIDATOR_0_HOME" 2>/dev/null || echo "")
-    echo "$PRIVKEY" > "$SPOUT/${keytype}.key"
+    PRIVKEY=$(echo "y" | mocad keys export "$KEYNAME" --unarmored-hex --unsafe \
+      --keyring-backend "$KEYRING" --home "$VALIDATOR_0_HOME" 2>&1 \
+      | grep -vE "WARNING|Enter|^$|Usage|Error|EOF" | tr -d '\n\r\t ')
+    printf '%064s\n' "$PRIVKEY" | tr ' ' '0' > "$SPOUT/${keytype}.key"
   done
 
-  BLS_PRIVKEY=$(mocad keys export "${SPNAME}-bls" --unarmored-hex --unsafe \
-    --keyring-backend "$KEYRING" --home "$VALIDATOR_0_HOME" 2>/dev/null || echo "")
-  echo "$BLS_PRIVKEY" > "$SPOUT/bls.key"
+  BLS_PRIVKEY=$(echo "y" | mocad keys export "${SPNAME}-bls" --unarmored-hex --unsafe \
+    --keyring-backend "$KEYRING" --home "$VALIDATOR_0_HOME" 2>&1 \
+    | grep -vE "WARNING|Enter|^$|Usage|Error|EOF" | tr -d '\n\r\t ')
+  printf '%064s\n' "$BLS_PRIVKEY" | tr ' ' '0' > "$SPOUT/bls.key"
 
-  # Write SP config template
-  cat > "$SPOUT/config.toml" <<SPCONFIG
-[Chain]
-ChainID = "${CHAIN_ID}"
-ChainAddress = ["http://validator-0:26657"]
+  # Write operator address file (used by entrypoint to patch config)
+  echo "${SP_OPERATOR_ADDRS[$i]}" > "$SPOUT/operator.addr"
 
-[SpAccount]
-SpOperatorAddress = "${SP_OPERATOR_ADDRS[$i]}"
-OperatorPrivateKey = "$(cat "$SPOUT/operator.key")"
-FundingPrivateKey = "$(cat "$SPOUT/fund.key")"
-SealPrivateKey = "$(cat "$SPOUT/seal.key")"
-ApprovalPrivateKey = "$(cat "$SPOUT/approval.key")"
-GcPrivateKey = "$(cat "$SPOUT/gc.key")"
-BlsPrivateKey = "$(cat "$SPOUT/bls.key")"
-
-[Endpoint]
-ApprovalGatewayAddress = "0.0.0.0:9033"
-ListenAddress = "0.0.0.0:9033"
-
-[DB]
-User = "root"
-Passwd = "MYSQL_PASSWORD"
-Address = "MYSQL_HOST:MYSQL_PORT"
-Database = "DB_NAME"
-
-[PieceStore]
-Shards = 0
-Store.Storage = "file"
-Store.BucketURL = "/data/sp-storage"
-SPCONFIG
-
-  echo "  $SPNAME: config written to $SPOUT"
+  echo "  $SPNAME: keys and address written to $SPOUT"
 done
 
 # --- Step 10: Write metadata ---

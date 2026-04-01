@@ -113,3 +113,93 @@ exec_moca_cmd() {
   fi
   moca-cmd "$@" 2>/dev/null
 }
+
+# --- Storage test helpers (aligned with devcontainer storage_utils) ---
+generate_bucket_name() {
+  local prefix="${1:-e2e-bucket}"
+  echo "${prefix}-$(date +%s)-${RANDOM}"
+}
+
+generate_group_name() {
+  local prefix="${1:-e2e-group}"
+  echo "${prefix}-$(date +%s)-$$"
+}
+
+generate_object_name() {
+  local prefix="${1:-obj}"
+  local ext="${2:-.txt}"
+  echo "${prefix}-$(date +%s)${ext}"
+}
+
+create_test_file() {
+  local path="${1:-/tmp/e2e-test-$(date +%s).txt}"
+  local content="${2:-e2e test content $(date)}"
+  echo "$content" > "$path"
+  echo "$path"
+}
+
+get_default_tags() {
+  echo '[{"key":"key1","value":"value1"},{"key":"key2","value":"value2"}]'
+}
+
+get_updated_tags() {
+  echo '[{"key":"key3","value":"value3"}]'
+}
+
+print_test_section() {
+  echo ""
+  echo "=== $* ==="
+}
+
+print_success() {
+  echo "  OK: $*"
+}
+
+wait_for_block() {
+  local seconds="${1:-3}"
+  sleep "$seconds"
+}
+
+# First IN_SERVICE SP operator from chain JSON (not moca-cmd output).
+first_in_service_sp_operator() {
+  local json addr
+  json="$(exec_mocad query sp storage-providers --node tcp://localhost:26657 --output json 2>/dev/null || echo "")"
+  if [ -z "$json" ]; then
+    return 1
+  fi
+  addr=$(echo "$json" | jq -r '.sps[] | select(.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0") | .operator_address' 2>/dev/null | head -1)
+  if [ -n "$addr" ] && [ "$addr" != "null" ]; then
+    echo "$addr"
+    return 0
+  fi
+  echo "$json" | jq -r '.sps[0].operator_address // empty' 2>/dev/null
+}
+
+# SP endpoint URL from first IN_SERVICE SP (http/https).
+first_in_service_sp_endpoint() {
+  local json ep
+  json="$(exec_mocad query sp storage-providers --node tcp://localhost:26657 --output json 2>/dev/null || echo "")"
+  if [ -z "$json" ]; then
+    return 1
+  fi
+  ep=$(echo "$json" | jq -r '.sps[] | select(.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0") | .endpoint' 2>/dev/null | head -1)
+  if [ -n "$ep" ] && [ "$ep" != "null" ]; then
+    echo "$ep"
+    return 0
+  fi
+  echo "$json" | jq -r '.sps[0].endpoint // empty' 2>/dev/null
+}
+
+extract_tx_hash() {
+  local output="$1"
+  local h
+  h=$(echo "$output" | grep -oE 'transaction hash:[[:space:]]+0x[0-9a-fA-F]+' | grep -oE '0x[0-9a-fA-F]+' | head -1)
+  [ -n "$h" ] && echo "$h" && return 0
+  h=$(echo "$output" | grep -oE 'txHash[=:][[:space:]]*0x[0-9a-fA-F]+' | grep -oE '0x[0-9a-fA-F]+' | head -1)
+  [ -n "$h" ] && echo "$h" && return 0
+  echo "$output" | grep -oE 'txn hash:[[:space:]]*0x[0-9a-fA-F]+' | grep -oE '0x[0-9a-fA-F]+' | head -1
+}
+
+list_sp_container_names() {
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^sp-[0-9]+$' | sort -V || true
+}

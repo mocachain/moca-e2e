@@ -116,17 +116,20 @@ Source repo merges to main
 | `test_evm_erc20` | EVM — contract deploy + interact |
 | `test_cross_module` | Bank, Staking, Distribution — sequential txs across modules |
 | `test_storage_bucket` | Storage — bucket create/query/delete via `mocad`; if `moca-cmd` is available, full bucket CLI flow |
-| `test_storage_object` | Storage — object put/head via `moca-cmd` (skipped if client unavailable) |
+| `test_storage_object` | Storage — full object CLI flow (`put`, `head`, `setTag`, `ls`, cleanup) when `moca-cmd` is available; else bucket-only `mocad` smoke |
+| `test_storage_object_seal` | Storage — poll `object get-progress` until sealed, then head/list |
 | `test_storage_group` | Storage — group lifecycle via `mocad`; if `moca-cmd` is available, full group CLI flow |
-| `test_storage_policy` | Storage — policy operations |
-| `test_payment` | Storage — payment flows |
+| `test_storage_policy` | Storage — bucket/object/group policy CRUD via `moca-cmd` GRNs when available; else `mocad put-policy` |
+| `test_payment` | Payment — `moca-cmd payment-account` flow when available; else `mocad tx payment` |
 | `test_sp_gateway` | SP — HTTP gateway reachability |
 | `test_sp_registration` | SP — on-chain registration checks |
 | `test_sp_params` | SP — module params |
-| `test_sp_diagnose` | SP — containers + gateway smoke diagnosis |
-| `test_sp_config` | SP — config.toml sanity checks from a running SP container |
-| `test_sp_join` | SP — chain registrations vs `moca-cmd sp ls` when available |
-| `test_sp_exit` | SP — read-only preconditions for exit flows |
+| `test_sp_tools` | SP — `moca-cmd sp ls` / `sp head` / `sp get-price` |
+| `test_sp_diagnose` | SP — containers, on-chain list, governance proposals, `moca-cmd sp ls`, gateway ports |
+| `test_sp_config` | SP — `config.toml` checks (GRPC, HTTP, metrics, BlockSyncer, GVG fees, Server modules) |
+| `test_sp_join` | SP — per-operator queries, container health, `moca-cmd sp ls`, `head`, `get-price` |
+| `test_sp_exit` | SP — bucket/object on target SP, GVG query; chain exit tx via EVM precompile (not in `mocad` CLI) |
+| `test_sp_delete` | SP — governance delete pre-checks only (no destructive tx by default) |
 
 `tests/lib.sh` exposes `resolve_moca_cmd` / `exec_moca_cmd` for optional `moca-cmd` in Docker (`moca-cmd` container) or on `PATH`.
 

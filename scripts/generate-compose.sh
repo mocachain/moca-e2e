@@ -180,7 +180,7 @@ for i in $(seq 0 $((NUM_SPS - 1))); do
       validator-0:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9033/status"]
+      test: ["CMD", "curl", "-sf", "http://localhost:9402/-/ready"]
       interval: 10s
       timeout: 5s
       retries: 30

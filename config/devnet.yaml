@@ -5,4 +5,6 @@ chain:
   chain_id: moca_5151-1
   rpc: https://tm-rpc.devnet-2.mocachain.dev
   grpc: grpc.devnet-2.mocachain.dev:443
-  rest: https://lcd.devnet-2.mocachain.dev
+  rest: https://api.devnet-2.mocachain.dev
+  api: https://api.devnet-2.mocachain.dev
+  evm_rpc: https://rpc.devnet-2.mocachain.dev

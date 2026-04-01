@@ -7,8 +7,7 @@ CONFIG_FILE="${2:-config/local.yaml}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
-if [ "$ENV" = "mainnet" ]; then echo "SKIP: not safe for mainnet"; exit 0; fi
-if [ "$ENV" != "local" ]; then echo "SKIP: staking test only on local"; exit 0; fi
+require_write_enabled "staking test"
 
 echo "Testing staking delegation and undelegation..."
 
@@ -26,7 +25,7 @@ VAL_OPER=$(echo "$VALS_JSON" | jq -r '.validators[1].operator_address')
 echo "  Delegating to: $VAL_OPER"
 
 # Query delegations before
-DEL_BEFORE=$(exec_mocad query staking delegations-to "$VAL_OPER" --node tcp://localhost:26657 --output json 2>/dev/null | \
+DEL_BEFORE=$(exec_mocad query staking delegations-to "$VAL_OPER" --node "$TM_RPC" --output json 2>/dev/null | \
   jq '.delegation_responses | length' 2>/dev/null || echo "0")
 echo "  Delegations to validator-1 before: $DEL_BEFORE"
 
@@ -37,7 +36,7 @@ cosmos_tx staking delegate "$VAL_OPER" "${DELEGATE_AMOUNT}${DENOM}" --from testa
 wait_for_tx 5
 
 # Query delegations after
-DEL_AFTER=$(exec_mocad query staking delegations-to "$VAL_OPER" --node tcp://localhost:26657 --output json 2>/dev/null | \
+DEL_AFTER=$(exec_mocad query staking delegations-to "$VAL_OPER" --node "$TM_RPC" --output json 2>/dev/null | \
   jq '.delegation_responses | length' 2>/dev/null || echo "0")
 echo "  Delegations to validator-1 after: $DEL_AFTER"
 
@@ -52,7 +51,7 @@ cosmos_tx staking unbond "$VAL_OPER" "${UNBOND_AMOUNT}${DENOM}" --from testaccou
 wait_for_tx 5
 
 # Query unbonding
-UNBONDING=$(exec_mocad query staking unbonding-delegations-from "$VAL_OPER" --node tcp://localhost:26657 --output json 2>/dev/null | \
+UNBONDING=$(exec_mocad query staking unbonding-delegations-from "$VAL_OPER" --node "$TM_RPC" --output json 2>/dev/null | \
   jq '.unbonding_responses | length' 2>/dev/null || echo "0")
 echo "  Unbonding delegations: $UNBONDING"
 

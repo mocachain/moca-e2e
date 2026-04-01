@@ -11,8 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
 source "$SCRIPT_DIR/lib.sh"
 
-if [ "$ENV" = "mainnet" ]; then echo "SKIP: not safe for mainnet"; exit 0; fi
-if [ "$ENV" != "local" ]; then echo "SKIP: group test only on local"; exit 0; fi
+require_write_enabled "storage group test"
 
 OWNER_ADDR=$(exec_mocad keys show testaccount -a --keyring-backend test 2>/dev/null || echo "")
 MEMBER_ADDR=$(exec_mocad keys show validator-0 -a --keyring-backend test 2>/dev/null || echo "")
@@ -35,7 +34,7 @@ run_mocad_group_smoke() {
     --from testaccount \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
-    --node tcp://localhost:26657 \
+    --node "$TM_RPC" \
     --fees "$FEES" \
     -y 2>/dev/null || echo "FAILED")
 
@@ -47,7 +46,7 @@ run_mocad_group_smoke() {
 
   echo "  Querying group..."
   exec_mocad query storage head-group "$OWNER_ADDR" "$group_name" \
-    --node tcp://localhost:26657 --output json 2>/dev/null | jq -r '.group_info.id // empty' || true
+    --node "$TM_RPC" --output json 2>/dev/null | jq -r '.group_info.id // empty' || true
 
   if [ -n "$MEMBER_ADDR" ]; then
     echo "  Adding member..."
@@ -56,7 +55,7 @@ run_mocad_group_smoke() {
       --from testaccount \
       --keyring-backend test \
       --chain-id "$CHAIN_ID" \
-      --node tcp://localhost:26657 \
+      --node "$TM_RPC" \
       --fees "$FEES" \
       -y 2>/dev/null || true
     wait_for_tx 3
@@ -67,7 +66,7 @@ run_mocad_group_smoke() {
     --from testaccount \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
-    --node tcp://localhost:26657 \
+    --node "$TM_RPC" \
     --fees "$FEES" \
     -y 2>/dev/null || true
   wait_for_tx 3

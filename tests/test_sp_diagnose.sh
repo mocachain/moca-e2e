@@ -26,7 +26,7 @@ fi
 
 echo ""
 echo "2) SP list from chain"
-SP_JSON="$(exec_mocad query sp storage-providers --node tcp://localhost:26657 --output json 2>/dev/null || echo "")"
+SP_JSON="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "")"
 if [ -z "$SP_JSON" ] || [ "$SP_JSON" = "null" ]; then
   echo "  SKIP: validator not reachable"
   exit 0
@@ -39,7 +39,7 @@ fi
 
 echo ""
 echo "3) governance proposals (SP-related)"
-GOV_JSON="$(exec_mocad query gov proposals --node tcp://localhost:26657 --output json 2>/dev/null || echo "")"
+GOV_JSON="$(exec_mocad query gov proposals --node "$TM_RPC" --output json 2>/dev/null || echo "")"
 if [ -z "$GOV_JSON" ] || [ "$GOV_JSON" = "null" ]; then
   echo "  WARN: could not query proposals"
 else

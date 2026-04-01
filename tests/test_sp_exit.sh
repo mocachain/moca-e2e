@@ -14,7 +14,7 @@ source "$SCRIPT_DIR/lib.sh"
 if [ "$ENV" = "mainnet" ]; then echo "SKIP: not safe for mainnet"; exit 0; fi
 if [ "$ENV" != "local" ]; then echo "SKIP: SP exit test only on local"; exit 0; fi
 
-SP_JSON="$(exec_mocad query sp storage-providers --node tcp://localhost:26657 --output json 2>/dev/null || echo '{}')"
+SP_JSON="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo '{}')"
 NUM_SPS="$(echo "$SP_JSON" | jq -r '.sps | length // 0' 2>/dev/null || echo "0")"
 if [ "$NUM_SPS" -lt 2 ]; then
   echo "SKIP: need at least 2 SPs for exit migration scenarios"
@@ -38,7 +38,7 @@ if [ -z "$OP" ]; then
   exit 0
 fi
 
-SP_ID="$(exec_mocad query sp storage-provider-by-operator-address "$OP" --node tcp://localhost:26657 --output json 2>/dev/null | jq -r '.storage_provider.id // .storageProvider.id // empty' 2>/dev/null || true)"
+SP_ID="$(exec_mocad query sp storage-provider-by-operator-address "$OP" --node "$TM_RPC" --output json 2>/dev/null | jq -r '.storage_provider.id // .storageProvider.id // empty' 2>/dev/null || true)"
 
 BUCKET_NAME="e2e-sp-exit-$(date +%s)-${RANDOM}"
 OBJECT_NAME="exit_obj.txt"
@@ -80,7 +80,7 @@ fi
 print_test_section "query SP and GVG before exit"
 echo "  operator=$OP sp_id=${SP_ID:-unknown}"
 if [ -n "$SP_ID" ] && [ "$SP_ID" != "null" ]; then
-  gvg=$(exec_mocad query virtualgroup gvg-statistics-within-sp "$SP_ID" --node tcp://localhost:26657 --output json 2>/dev/null || echo "")
+  gvg=$(exec_mocad query virtualgroup gvg-statistics-within-sp "$SP_ID" --node "$TM_RPC" --output json 2>/dev/null || echo "")
   echo "$gvg" | jq -c '{primary_count, secondary_count}' 2>/dev/null || echo "$gvg" | head -3
 fi
 

@@ -8,12 +8,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 if [ "$ENV" = "mainnet" ]; then echo "SKIP: not safe for mainnet"; exit 0; fi
-if [ "$ENV" != "local" ]; then echo "SKIP: SP registration test only on local"; exit 0; fi
 
 echo "Testing SP registration..."
 
 # Query storage providers from chain
-SP_JSON=$(exec_mocad query sp storage-providers --node tcp://localhost:26657 --output json 2>/dev/null || echo "{}")
+SP_JSON=$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "{}")
 NUM_SPS=$(echo "$SP_JSON" | jq '.sps | length // 0' 2>/dev/null || echo "0")
 
 echo "  Registered SPs on chain: $NUM_SPS"
@@ -39,7 +38,7 @@ for i in $(seq 0 $((NUM_SPS - 1))); do
 done
 
 # Query SP params
-SP_PARAMS=$(exec_mocad query sp params --node tcp://localhost:26657 --output json 2>/dev/null || echo "{}")
+SP_PARAMS=$(exec_mocad query sp params --node "$TM_RPC" --output json 2>/dev/null || echo "{}")
 DEPOSIT_DENOM=$(echo "$SP_PARAMS" | jq -r '.params.deposit_denom // empty' 2>/dev/null)
 echo "  SP deposit denom: ${DEPOSIT_DENOM:-unknown}"
 

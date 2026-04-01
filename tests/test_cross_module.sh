@@ -8,8 +8,7 @@ CONFIG_FILE="${2:-config/local.yaml}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
-if [ "$ENV" = "mainnet" ]; then echo "SKIP: not safe for mainnet"; exit 0; fi
-if [ "$ENV" != "local" ]; then echo "SKIP: cross-module test only on local"; exit 0; fi
+require_write_enabled "cross-module test"
 
 echo "Testing cross-module transactions..."
 

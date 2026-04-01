@@ -7,14 +7,12 @@ CONFIG_FILE="${2:-config/local.yaml}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
-if [ "$ENV" != "local" ]; then echo "SKIP: virtualgroup test only on local"; exit 0; fi
-
 echo "Testing virtual group module..."
 
 # Query virtualgroup params
 echo "  Querying virtualgroup params..."
 VG_PARAMS=$(exec_mocad query virtualgroup params \
-  --node tcp://localhost:26657 --output json 2>/dev/null || echo "")
+  --node "$TM_RPC" --output json 2>/dev/null || echo "")
 
 if [ -z "$VG_PARAMS" ] || [ "$VG_PARAMS" = "{}" ]; then
   echo "  WARN: Virtualgroup module not available"
@@ -28,7 +26,7 @@ echo "  gvg_staking_per_bytes: $GVG_STAKING"
 echo "  max_gvg_per_family: $MAX_STORE_SIZE"
 
 # Check if any SPs registered
-SP_JSON=$(exec_mocad query sp storage-providers --node tcp://localhost:26657 --output json 2>/dev/null || echo "{}")
+SP_JSON=$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "{}")
 NUM_SPS=$(echo "$SP_JSON" | jq '.sps | length // 0' 2>/dev/null || echo "0")
 
 if [ "$NUM_SPS" -le 0 ]; then
@@ -40,7 +38,7 @@ fi
 # Query global virtual group families
 echo "  Querying global virtual group families..."
 GVG_FAMILIES=$(exec_mocad query virtualgroup global-virtual-group-families \
-  --node tcp://localhost:26657 --output json 2>/dev/null || echo "")
+  --node "$TM_RPC" --output json 2>/dev/null || echo "")
 
 NUM_FAMILIES=$(echo "$GVG_FAMILIES" | jq '.global_virtual_group_families | length // 0' 2>/dev/null || echo "0")
 echo "  GVG families: $NUM_FAMILIES"
@@ -49,7 +47,7 @@ echo "  GVG families: $NUM_FAMILIES"
 for i in $(seq 0 $((NUM_SPS - 1))); do
   SP_ID=$((i + 1))
   GVG_STATS=$(exec_mocad query virtualgroup gvg-statistics-within-sp "$SP_ID" \
-    --node tcp://localhost:26657 --output json 2>/dev/null || echo "")
+    --node "$TM_RPC" --output json 2>/dev/null || echo "")
 
   if [ -n "$GVG_STATS" ] && [ "$GVG_STATS" != "{}" ]; then
     echo "  SP $SP_ID GVG count: $(echo "$GVG_STATS" | jq '.gvg_statistics.stored_size // "N/A"' 2>/dev/null)"

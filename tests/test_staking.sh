@@ -34,7 +34,7 @@ echo "  Delegations before: $DEL_BEFORE"
 
 # Delegate 1 MOCA
 DELEGATE_AMOUNT="1000000000000000000"
-echo "  Delegating ${DELEGATE_AMOUNT}${DENOM}..."
+echo "  Delegating ${DELEGATE_AMOUNT}${DENOM} from $TEST_KEY..."
 cosmos_tx staking delegate "$VAL_OPER" "${DELEGATE_AMOUNT}${DENOM}" --from "$TEST_KEY"
 wait_for_tx 5
 
@@ -42,6 +42,10 @@ wait_for_tx 5
 DEL_AFTER=$(exec_mocad query staking delegations-to "$VAL_OPER" --node "$TM_RPC" --output json 2>/dev/null | \
   jq '.delegation_responses | length' 2>/dev/null || echo "0")
 echo "  Delegations after: $DEL_AFTER"
+
+assert_gt "$DEL_AFTER" "$DEL_BEFORE" "New delegation recorded" || {
+  echo "  WARN: Delegation count didn't increase (may have merged with existing)"
+}
 
 # Unbond same amount
 echo "  Unbonding ${DELEGATE_AMOUNT}${DENOM}..."

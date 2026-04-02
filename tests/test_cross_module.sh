@@ -37,7 +37,12 @@ echo "  [staking] Delegate $TEST_KEY → validator"
 cosmos_tx staking delegate "$VAL_OPER" "${AMT}${DENOM}" --from "$TEST_KEY"
 wait_for_tx 5
 
-# --- 3. Staking: unbond ---
+# --- 3. Distribution: withdraw rewards ---
+echo "  [distribution] Withdraw rewards for $TEST_KEY"
+cosmos_tx distribution withdraw-all-rewards --from "$TEST_KEY"
+wait_for_tx 5
+
+# --- 4. Staking: unbond ---
 echo "  [staking] Unbond $TEST_KEY from validator"
 cosmos_tx staking unbond "$VAL_OPER" "${AMT}${DENOM}" --from "$TEST_KEY"
 wait_for_tx 5
@@ -53,4 +58,4 @@ echo "  Bonded validators: $BONDED"
 assert_gt "$HEIGHT_AFTER" "$HEIGHT_BEFORE" "Chain advanced during cross-module txs" || exit 1
 assert_gt "$BONDED" 0 "Validators still bonded after cross-module txs" || exit 1
 
-echo "PASS: Cross-module transactions (bank → staking → unbond) successful"
+echo "PASS: Cross-module transactions (bank → staking → distribution → unbond) successful"

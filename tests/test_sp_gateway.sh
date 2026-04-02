@@ -26,7 +26,9 @@ if [ "$ENV" = "local" ]; then
     fi
     CHECKED=$((CHECKED + 1))
     STATUS_CODE=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 3 "${URL}/status" 2>/dev/null || echo "000")
-    echo "  SP $i (localhost:$PORT): status_code=$STATUS_CODE"
+    HEALTH=$(curl -sf --connect-timeout 3 "${URL}/-/healthy" 2>/dev/null || echo "")
+    READY=$(curl -sf --connect-timeout 3 "${URL}/-/ready" 2>/dev/null || echo "")
+    echo "  SP $i (localhost:$PORT): status_code=$STATUS_CODE health=${HEALTH:-N/A} ready=${READY:-N/A}"
     [ "$STATUS_CODE" != "000" ] && PASSED=$((PASSED + 1)) || FAILED=$((FAILED + 1))
   done
 else
@@ -46,8 +48,15 @@ else
     [ -z "$ENDPOINT" ] || [ "$ENDPOINT" = "null" ] && continue
 
     CHECKED=$((CHECKED + 1))
+
+    # Check base endpoint
     STATUS_CODE=$(curl -sf -o /dev/null -w "%{http_code}" --connect-timeout 5 "${ENDPOINT}" 2>/dev/null || echo "000")
-    echo "  $MONIKER ($ENDPOINT): status_code=$STATUS_CODE"
+
+    # Check health endpoints
+    HEALTH=$(curl -sf --connect-timeout 5 "${ENDPOINT}/-/healthy" 2>/dev/null || echo "")
+    READY=$(curl -sf --connect-timeout 5 "${ENDPOINT}/-/ready" 2>/dev/null || echo "")
+
+    echo "  $MONIKER ($ENDPOINT): status_code=$STATUS_CODE health=${HEALTH:-N/A} ready=${READY:-N/A}"
     [ "$STATUS_CODE" != "000" ] && PASSED=$((PASSED + 1)) || FAILED=$((FAILED + 1))
   done
 fi

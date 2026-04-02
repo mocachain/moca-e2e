@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 require_write_enabled "storage bucket test"
+require_test_key
 
 SP_CHECK=$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "")
 NUM_SPS=$(echo "$SP_CHECK" | jq -r '.sps | length // 0' 2>/dev/null || echo "0")
@@ -39,7 +40,7 @@ run_mocad_bucket_smoke() {
   create_result=$(exec_mocad tx storage create-bucket "$bucket_name" \
     --primary-sp-address "$PRIMARY_SP" \
     --visibility VISIBILITY_TYPE_PRIVATE \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -66,7 +67,7 @@ run_mocad_bucket_smoke() {
 
   echo "  Deleting bucket..."
   exec_mocad tx storage delete-bucket "$bucket_name" \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \

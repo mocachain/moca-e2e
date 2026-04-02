@@ -12,9 +12,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 require_write_enabled "storage group test"
+require_test_key
 
-OWNER_ADDR=$(exec_mocad keys show testaccount -a --keyring-backend test 2>/dev/null || echo "")
-MEMBER_ADDR=$(exec_mocad keys show validator-0 -a --keyring-backend test 2>/dev/null || echo "")
+OWNER_ADDR=$(exec_mocad keys show "$TEST_KEY" -a --keyring-backend test 2>/dev/null || echo "")
+MEMBER_ADDR=$(exec_mocad keys show "$SENDER_KEY" -a --keyring-backend test 2>/dev/null || echo "")
 
 if [ -z "$OWNER_ADDR" ]; then
   echo "SKIP: testaccount not found in validator keyring"
@@ -31,7 +32,7 @@ run_mocad_group_smoke() {
   echo "  Creating group..."
   local create_result
   create_result=$(exec_mocad tx storage create-group "$group_name" \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -52,7 +53,7 @@ run_mocad_group_smoke() {
     echo "  Adding member..."
     exec_mocad tx storage update-group-member "$group_name" \
       --add-members "$MEMBER_ADDR" \
-      --from testaccount \
+      --from "$TEST_KEY" \
       --keyring-backend test \
       --chain-id "$CHAIN_ID" \
       --node "$TM_RPC" \
@@ -63,7 +64,7 @@ run_mocad_group_smoke() {
 
   echo "  Deleting group..."
   exec_mocad tx storage delete-group "$group_name" \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \

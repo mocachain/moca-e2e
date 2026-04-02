@@ -36,7 +36,7 @@ run_mocad_object_smoke() {
   cr=$(exec_mocad tx storage create-bucket "$bucket_name" \
     --primary-sp-address "$PRIMARY_SP" \
     --visibility VISIBILITY_TYPE_PRIVATE \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -49,7 +49,7 @@ run_mocad_object_smoke() {
   wait_for_tx 5
   exec_mocad query storage head-bucket "$bucket_name" --node "$TM_RPC" --output json 2>/dev/null | jq -r '.bucket_info.bucket_name // empty' || true
   exec_mocad tx storage delete-bucket "$bucket_name" \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \

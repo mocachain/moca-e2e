@@ -10,9 +10,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 require_write_enabled "storage policy test"
+require_test_key
 
-OWNER_ADDR=$(exec_mocad keys show testaccount -a --keyring-backend test 2>/dev/null || echo "")
-GRANTEE_ADDR=$(exec_mocad keys show validator-0 -a --keyring-backend test 2>/dev/null || echo "")
+OWNER_ADDR=$(exec_mocad keys show "$TEST_KEY" -a --keyring-backend test 2>/dev/null || echo "")
+GRANTEE_ADDR=$(exec_mocad keys show "$SENDER_KEY" -a --keyring-backend test 2>/dev/null || echo "")
 
 if [ -z "$OWNER_ADDR" ] || [ -z "$GRANTEE_ADDR" ]; then
   echo "SKIP: required accounts not found"
@@ -41,7 +42,7 @@ run_mocad_policy() {
   exec_mocad tx storage create-bucket "$bucket_name" \
     --primary-sp-address "$PRIMARY_SP" \
     --visibility VISIBILITY_TYPE_PRIVATE \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -55,7 +56,7 @@ run_mocad_policy() {
   exec_mocad tx storage put-policy "$bucket_name" \
     --grantee "$GRANTEE_ADDR" \
     --actions "ACTION_GET_OBJECT" \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -64,7 +65,7 @@ run_mocad_policy() {
   wait_for_tx 3
 
   exec_mocad tx storage delete-bucket "$bucket_name" \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \

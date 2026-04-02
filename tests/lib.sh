@@ -61,11 +61,13 @@ exec_mocad() {
     return $?
   fi
   if command -v mocad >/dev/null 2>&1; then
-    if [ -n "$MOCAD_HOME" ]; then
-      mocad "$@" --home "$MOCAD_HOME" 2>/dev/null
-    else
-      mocad "$@" 2>/dev/null
+    local extra_args=()
+    [ -n "$MOCAD_HOME" ] && extra_args+=(--home "$MOCAD_HOME")
+    # For remote envs, pass --evm-node to avoid localhost:8545 fallback
+    if [ "${ENV:-local}" != "local" ] && [ -n "${EVM_RPC:-}" ]; then
+      extra_args+=(--evm-node "$EVM_RPC")
     fi
+    mocad "$@" "${extra_args[@]}" 2>/dev/null
     return $?
   fi
   echo "ERROR: mocad not found (no ${VALIDATOR_CONTAINER} container and no local mocad on PATH)" >&2

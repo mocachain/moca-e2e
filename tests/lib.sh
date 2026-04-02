@@ -44,16 +44,9 @@ require_write_enabled() {
 }
 
 # --- Execute mocad either from docker validator or local PATH ---
-# For devnet/testnet, MOCAD_HOME can point to the correct keyring home.
+# Set MOCAD_HOME to point mocad at the keyring with your test key.
+# Example: MOCAD_HOME=~/.mocad-devnet make test ENV=devnet
 MOCAD_HOME="${MOCAD_HOME:-}"
-if [ -z "$MOCAD_HOME" ] && [ "${ENV:-local}" != "local" ]; then
-  # Auto-detect home from standard aliases (mocadd = devnet, mocadt = testnet)
-  case "${ENV:-}" in
-    devnet)  MOCAD_HOME="$HOME/networks/moca/devnet" ;;
-    testnet) MOCAD_HOME="$HOME/networks/moca/testnet" ;;
-    mainnet) MOCAD_HOME="$HOME/networks/moca/mainnet" ;;
-  esac
-fi
 
 exec_mocad() {
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${VALIDATOR_CONTAINER}$"; then

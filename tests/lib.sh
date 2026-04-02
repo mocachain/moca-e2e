@@ -12,6 +12,15 @@ TM_RPC="${TM_RPC:-$RPC}"
 FEES="${FEES:-200000000000000amoca}"
 VALIDATOR_CONTAINER="${VALIDATOR_CONTAINER:-validator-0}"
 
+# Test key: for local use testaccount (created in genesis), for devnet/testnet use DEVNET_TEST_KEY
+if [ "${ENV:-local}" = "local" ]; then
+  TEST_KEY="${TEST_KEY:-testaccount}"
+  SENDER_KEY="${SENDER_KEY:-validator-0}"
+else
+  TEST_KEY="${DEVNET_TEST_KEY:-${TEST_KEY:-}}"
+  SENDER_KEY="${DEVNET_TEST_KEY:-${SENDER_KEY:-}}"
+fi
+
 # Cosmos CLI prefers tcp:// for local CometBFT RPC.
 if [[ "$TM_RPC" == http://* ]]; then
   TM_RPC="tcp://${TM_RPC#http://}"
@@ -35,13 +44,28 @@ require_write_enabled() {
 }
 
 # --- Execute mocad either from docker validator or local PATH ---
+# For devnet/testnet, MOCAD_HOME can point to the correct keyring home.
+MOCAD_HOME="${MOCAD_HOME:-}"
+if [ -z "$MOCAD_HOME" ] && [ "${ENV:-local}" != "local" ]; then
+  # Auto-detect home from standard aliases (mocadd = devnet, mocadt = testnet)
+  case "${ENV:-}" in
+    devnet)  MOCAD_HOME="$HOME/networks/moca/devnet" ;;
+    testnet) MOCAD_HOME="$HOME/networks/moca/testnet" ;;
+    mainnet) MOCAD_HOME="$HOME/networks/moca/mainnet" ;;
+  esac
+fi
+
 exec_mocad() {
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${VALIDATOR_CONTAINER}$"; then
     docker exec "$VALIDATOR_CONTAINER" mocad "$@" --home /root/.mocad 2>/dev/null
     return $?
   fi
   if command -v mocad >/dev/null 2>&1; then
-    mocad "$@" 2>/dev/null
+    if [ -n "$MOCAD_HOME" ]; then
+      mocad "$@" --home "$MOCAD_HOME" 2>/dev/null
+    else
+      mocad "$@" 2>/dev/null
+    fi
     return $?
   fi
   echo "ERROR: mocad not found (no ${VALIDATOR_CONTAINER} container and no local mocad on PATH)" >&2
@@ -73,6 +97,26 @@ get_bonded_validator_count() {
 
 get_validator_operator_addrs() {
   get_validators_json | jq -r '.validators[].operator_address' 2>/dev/null
+}
+
+# --- Account helpers ---
+# Resolve a key name to an address. Works with docker keyring (local) or host keyring (devnet).
+get_key_address() {
+  local key="$1"
+  exec_mocad keys show "$key" -a --keyring-backend test 2>/dev/null || echo ""
+}
+
+require_test_key() {
+  if [ -z "$TEST_KEY" ]; then
+    echo "SKIP: no test key configured (set DEVNET_TEST_KEY=<keyname> for devnet)"
+    exit 0
+  fi
+  local addr
+  addr=$(get_key_address "$TEST_KEY")
+  if [ -z "$addr" ]; then
+    echo "SKIP: test key '$TEST_KEY' not found in keyring"
+    exit 0
+  fi
 }
 
 # --- Transaction helpers ---

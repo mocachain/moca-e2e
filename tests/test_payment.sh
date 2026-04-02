@@ -28,7 +28,7 @@ run_moca_cmd_payment() {
   fi
 
   print_test_section "payment-account create"
-  out=$(exec_moca_cmd payment-account create || true)
+  out=$(exec_moca_cmd_signed payment-account create || true)
   if ! echo "$out" | grep -qiE "txHash|transaction"; then
     echo "WARN: payment-account create output unexpected, falling back to mocad"
     return 1
@@ -54,7 +54,7 @@ run_moca_cmd_payment() {
 
   dep_amt="1000000000000000000"
   print_test_section "deposit"
-  out=$(exec_moca_cmd payment-account deposit --toAddress "$pa_addr" --amount "$dep_amt" || true)
+  out=$(exec_moca_cmd_signed payment-account deposit --toAddress "$pa_addr" --amount "$dep_amt" || true)
   echo "$out" | head -6
   wait_for_block 5
 
@@ -64,7 +64,7 @@ run_moca_cmd_payment() {
 
   withdraw_amt="500000000000000000"
   print_test_section "withdraw"
-  out=$(exec_moca_cmd payment-account withdraw --fromAddress "$pa_addr" --amount "$withdraw_amt" || true)
+  out=$(exec_moca_cmd_signed payment-account withdraw --fromAddress "$pa_addr" --amount "$withdraw_amt" || true)
   echo "$out" | head -6
   wait_for_block 5
 

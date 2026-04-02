@@ -84,13 +84,13 @@ run_moca_cmd_group_full() {
   echo "Testing storage group (moca-cmd path): $group_name"
 
   cleanup_group() {
-    exec_moca_cmd group rm "$group_name" >/dev/null 2>&1 || true
+    exec_moca_cmd_signed group rm "$group_name" >/dev/null 2>&1 || true
   }
   trap cleanup_group EXIT
 
   echo "  Step 1: create group..."
   local out
-  out=$(exec_moca_cmd group create --tags="$tags" "$group_name" || true)
+  out=$(exec_moca_cmd_signed group create --tags="$tags" "$group_name" || true)
   if ! echo "$out" | grep -q "make_group:\|$group_name"; then
     echo "  WARN: create group output unexpected"
     trap - EXIT
@@ -103,7 +103,7 @@ run_moca_cmd_group_full() {
   wait_for_tx 2
 
   echo "  Step 3: update members..."
-  out=$(exec_moca_cmd group update --addMembers "$member" "$group_name" || true)
+  out=$(exec_moca_cmd_signed group update --addMembers "$member" "$group_name" || true)
   echo "$out" | head -5
   wait_for_tx 3
 
@@ -123,7 +123,7 @@ run_moca_cmd_group_full() {
   exec_moca_cmd group ls 2>/dev/null | head -20 || true
 
   echo "  Step 8: remove group..."
-  exec_moca_cmd group rm "$group_name" >/dev/null 2>&1 || true
+  exec_moca_cmd_signed group rm "$group_name" >/dev/null 2>&1 || true
   wait_for_tx 3
 
   trap - EXIT

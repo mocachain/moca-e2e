@@ -71,13 +71,13 @@ run_moca_cmd_object_full() {
 
   cleanup() {
     rm -f "$object_file"
-    exec_moca_cmd bucket rm "$bucket_url" >/dev/null 2>&1 || true
+    exec_moca_cmd_signed bucket rm "$bucket_url" >/dev/null 2>&1 || true
   }
   trap cleanup EXIT
 
   print_test_section "Step 1: create bucket"
   local out
-  out=$(exec_moca_cmd bucket create --primarySP "$PRIMARY_SP" --tags="$tags" "$bucket_url" || true)
+  out=$(exec_moca_cmd_signed bucket create --primarySP "$PRIMARY_SP" --tags="$tags" "$bucket_url" || true)
   if ! echo "$out" | grep -q "make_bucket:\|$bucket_name"; then
     echo "WARN: bucket create output unexpected"
     trap - EXIT
@@ -86,7 +86,7 @@ run_moca_cmd_object_full() {
   wait_for_block 4
 
   print_test_section "Step 2: put object"
-  out=$(exec_moca_cmd object put --tags="$tags" --contentType "$content_type" "$object_file" "$object_path" || true)
+  out=$(exec_moca_cmd_signed object put --tags="$tags" --contentType "$content_type" "$object_file" "$object_path" || true)
   if ! echo "$out" | grep -qiE "object.*created|created on chain|sealing|upload"; then
     echo "WARN: object put may have failed"
     trap - EXIT
@@ -123,7 +123,7 @@ run_moca_cmd_object_full() {
   fi
 
   print_test_section "Step 6: remove bucket"
-  out=$(exec_moca_cmd bucket rm "$bucket_url" || true)
+  out=$(exec_moca_cmd_signed bucket rm "$bucket_url" || true)
   if echo "$out" | grep -qiE "delete|remove|success"; then
     print_success "bucket removed"
   fi

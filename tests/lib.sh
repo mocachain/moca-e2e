@@ -161,10 +161,20 @@ assert_ne() {
   fi
 }
 
-# --- moca-cmd helpers (optional, best-effort) ---
+# --- moca-cmd helpers ---
+# MOCA_CMD_HOME: keystore home for moca-cmd (separate from mocad keyring)
+# MOCA_CMD_PASSWORD_FILE: password file for the keystore
+MOCA_CMD_HOME="${MOCA_CMD_HOME:-}"
+MOCA_CMD_PASSWORD_FILE="${MOCA_CMD_PASSWORD_FILE:-}"
+MOCA_CMD_BIN="${MOCA_CMD_BIN:-}"
+
 resolve_moca_cmd() {
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^moca-cmd$'; then
     echo "docker:moca-cmd"
+    return 0
+  fi
+  if [ -n "$MOCA_CMD_BIN" ] && [ -x "$MOCA_CMD_BIN" ]; then
+    echo "local:$MOCA_CMD_BIN"
     return 0
   fi
   if command -v moca-cmd >/dev/null 2>&1; then
@@ -174,15 +184,45 @@ resolve_moca_cmd() {
   return 1
 }
 
+# exec_moca_cmd: run moca-cmd with network flags (read-only queries, no signing)
 exec_moca_cmd() {
-  local target
+  local target bin
   target="$(resolve_moca_cmd 2>/dev/null)" || return 127
   if [[ "$target" == docker:* ]]; then
     local container="${target#docker:}"
     docker exec "$container" moca-cmd "$@" 2>/dev/null
     return $?
   fi
-  moca-cmd "$@" 2>/dev/null
+  bin="${target#local:}"
+  local net_args=()
+  if [ "${ENV:-local}" != "local" ]; then
+    [ -n "${RPC:-}" ] && net_args+=(--rpcAddr "$RPC")
+    [ -n "${CHAIN_ID:-}" ] && net_args+=(--chainId "$CHAIN_ID")
+    [ -n "${EVM_RPC:-}" ] && net_args+=(--evmRpcAddr "$EVM_RPC")
+  fi
+  "$bin" "${net_args[@]}" "$@" 2>/dev/null
+}
+
+# exec_moca_cmd_signed: run moca-cmd with network flags + keystore (for write operations)
+# IMPORTANT: do NOT pass --host — moca-cmd resolves SP endpoints from chain automatically
+exec_moca_cmd_signed() {
+  local target bin
+  target="$(resolve_moca_cmd 2>/dev/null)" || return 127
+  if [[ "$target" == docker:* ]]; then
+    local container="${target#docker:}"
+    docker exec "$container" moca-cmd "$@" 2>/dev/null
+    return $?
+  fi
+  bin="${target#local:}"
+  local args=()
+  if [ "${ENV:-local}" != "local" ]; then
+    [ -n "${RPC:-}" ] && args+=(--rpcAddr "$RPC")
+    [ -n "${CHAIN_ID:-}" ] && args+=(--chainId "$CHAIN_ID")
+    [ -n "${EVM_RPC:-}" ] && args+=(--evmRpcAddr "$EVM_RPC")
+  fi
+  [ -n "$MOCA_CMD_HOME" ] && args+=(--home "$MOCA_CMD_HOME")
+  [ -n "$MOCA_CMD_PASSWORD_FILE" ] && args+=(-p "$MOCA_CMD_PASSWORD_FILE")
+  "$bin" "${args[@]}" "$@" 2>/dev/null
 }
 
 # --- Storage test helpers (aligned with devcontainer storage_utils) ---

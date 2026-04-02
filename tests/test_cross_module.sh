@@ -24,8 +24,8 @@ VAL_OPER=$(echo "$VALS_JSON" | jq -r '[.validators[] | select(.status=="BOND_STA
 HEIGHT_BEFORE=$(get_block_height)
 FRESH_ADDR="0x$(openssl rand -hex 20)"
 
-# Use small amounts to preserve test funds (0.001 MOCA = 1e15 amoca)
-AMT="1000000000000000"
+# 1 MOCA per operation
+AMT="1000000000000000000"
 
 # --- 1. Bank: send to fresh address ---
 echo "  [bank] Send $TEST_KEY → fresh address"

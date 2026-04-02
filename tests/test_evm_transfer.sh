@@ -51,7 +51,7 @@ echo "  Recipient balance before: $BALANCE_BEFORE"
 
 # Send 0.001 MOCA (1e15 wei) — small to preserve funds
 echo "  Sending via cast..."
-cast send "$RECIPIENT" --value "1000000000000000" \
+cast send "$RECIPIENT" --value "10000000000000000" \
   --private-key "0x${PRIVKEY}" --rpc-url "$EVM_RPC" \
   --chain-id "$EVM_CHAIN_ID" 2>&1 | tail -1 || echo "  cast send may have failed"
 sleep 5

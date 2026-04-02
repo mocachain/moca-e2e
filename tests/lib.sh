@@ -112,6 +112,16 @@ require_test_key() {
     echo "SKIP: test key '$TEST_KEY' not found in keyring"
     exit 0
   fi
+  # On remote envs, check the account has enough funds (~3 MOCA minimum for full suite)
+  if [ "${ENV:-local}" != "local" ]; then
+    local bal
+    bal=$(get_balance "$addr")
+    # 3 MOCA = 3000000000000000000 amoca
+    if [ -n "$bal" ] && [ "$bal" != "0" ] && [ ${#bal} -lt 19 ]; then
+      echo "WARN: $TEST_KEY balance is low ($bal $DENOM). Full write suite needs ~3 MOCA."
+      echo "      Fund $addr with at least 3000000000000000000 amoca before running."
+    fi
+  fi
 }
 
 # --- Transaction helpers ---

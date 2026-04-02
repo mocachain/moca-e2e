@@ -32,8 +32,8 @@ DEL_BEFORE=$(exec_mocad query staking delegations-to "$VAL_OPER" --node "$TM_RPC
   jq '.delegation_responses | length' 2>/dev/null || echo "0")
 echo "  Delegations before: $DEL_BEFORE"
 
-# Delegate 0.001 MOCA (small to preserve funds)
-DELEGATE_AMOUNT="1000000000000000"
+# Delegate 1 MOCA
+DELEGATE_AMOUNT="1000000000000000000"
 echo "  Delegating ${DELEGATE_AMOUNT}${DENOM}..."
 cosmos_tx staking delegate "$VAL_OPER" "${DELEGATE_AMOUNT}${DENOM}" --from "$TEST_KEY"
 wait_for_tx 5

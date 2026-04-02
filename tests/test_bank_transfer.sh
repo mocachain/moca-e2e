@@ -24,8 +24,8 @@ echo "  Receiver (fresh): $RECEIVER"
 SENDER_BEFORE=$(get_balance "$SENDER")
 echo "  Sender balance before: $SENDER_BEFORE $DENOM"
 
-# Send 0.001 MOCA (1e15 amoca) — small amount to preserve funds
-SEND_AMOUNT="1000000000000000"
+# Send 1 MOCA (1e18 amoca)
+SEND_AMOUNT="1000000000000000000"
 echo "  Sending ${SEND_AMOUNT} ${DENOM}..."
 cosmos_tx bank send "$TEST_KEY" "$RECEIVER" "${SEND_AMOUNT}${DENOM}" --from "$TEST_KEY"
 wait_for_tx 5

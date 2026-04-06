@@ -12,9 +12,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 require_write_enabled "storage group test"
+require_test_key
 
-OWNER_ADDR=$(exec_mocad keys show testaccount -a --keyring-backend test 2>/dev/null || echo "")
-MEMBER_ADDR=$(exec_mocad keys show validator-0 -a --keyring-backend test 2>/dev/null || echo "")
+OWNER_ADDR=$(exec_mocad keys show "$TEST_KEY" -a --keyring-backend test 2>/dev/null || echo "")
+MEMBER_ADDR=$(exec_mocad keys show "$SENDER_KEY" -a --keyring-backend test 2>/dev/null || echo "")
 
 if [ -z "$OWNER_ADDR" ]; then
   echo "SKIP: testaccount not found in validator keyring"
@@ -31,7 +32,7 @@ run_mocad_group_smoke() {
   echo "  Creating group..."
   local create_result
   create_result=$(exec_mocad tx storage create-group "$group_name" \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -52,7 +53,7 @@ run_mocad_group_smoke() {
     echo "  Adding member..."
     exec_mocad tx storage update-group-member "$group_name" \
       --add-members "$MEMBER_ADDR" \
-      --from testaccount \
+      --from "$TEST_KEY" \
       --keyring-backend test \
       --chain-id "$CHAIN_ID" \
       --node "$TM_RPC" \
@@ -63,7 +64,7 @@ run_mocad_group_smoke() {
 
   echo "  Deleting group..."
   exec_mocad tx storage delete-group "$group_name" \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -83,13 +84,13 @@ run_moca_cmd_group_full() {
   echo "Testing storage group (moca-cmd path): $group_name"
 
   cleanup_group() {
-    exec_moca_cmd group rm "$group_name" >/dev/null 2>&1 || true
+    exec_moca_cmd_signed group rm "$group_name" >/dev/null 2>&1 || true
   }
   trap cleanup_group EXIT
 
   echo "  Step 1: create group..."
   local out
-  out=$(exec_moca_cmd group create --tags="$tags" "$group_name" || true)
+  out=$(exec_moca_cmd_signed group create --tags="$tags" "$group_name" || true)
   if ! echo "$out" | grep -q "make_group:\|$group_name"; then
     echo "  WARN: create group output unexpected"
     trap - EXIT
@@ -102,7 +103,7 @@ run_moca_cmd_group_full() {
   wait_for_tx 2
 
   echo "  Step 3: update members..."
-  out=$(exec_moca_cmd group update --addMembers "$member" "$group_name" || true)
+  out=$(exec_moca_cmd_signed group update --addMembers "$member" "$group_name" || true)
   echo "$out" | head -5
   wait_for_tx 3
 
@@ -122,7 +123,7 @@ run_moca_cmd_group_full() {
   exec_moca_cmd group ls 2>/dev/null | head -20 || true
 
   echo "  Step 8: remove group..."
-  exec_moca_cmd group rm "$group_name" >/dev/null 2>&1 || true
+  exec_moca_cmd_signed group rm "$group_name" >/dev/null 2>&1 || true
   wait_for_tx 3
 
   trap - EXIT

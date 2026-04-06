@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 require_write_enabled "storage bucket test"
+require_test_key
 
 SP_CHECK=$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "")
 NUM_SPS=$(echo "$SP_CHECK" | jq -r '.sps | length // 0' 2>/dev/null || echo "0")
@@ -39,7 +40,7 @@ run_mocad_bucket_smoke() {
   create_result=$(exec_mocad tx storage create-bucket "$bucket_name" \
     --primary-sp-address "$PRIMARY_SP" \
     --visibility VISIBILITY_TYPE_PRIVATE \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -66,7 +67,7 @@ run_mocad_bucket_smoke() {
 
   echo "  Deleting bucket..."
   exec_mocad tx storage delete-bucket "$bucket_name" \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -86,13 +87,13 @@ run_moca_cmd_bucket_full() {
   echo "Testing storage bucket (moca-cmd full path): $bucket_name"
 
   cleanup_bucket() {
-    exec_moca_cmd bucket rm "$bucket_url" >/dev/null 2>&1 || true
+    exec_moca_cmd_signed bucket rm "$bucket_url" >/dev/null 2>&1 || true
   }
   trap cleanup_bucket EXIT
 
   echo "  Step 1: create bucket..."
   local out
-  out=$(exec_moca_cmd bucket create --tags="$tags" --primarySP "$PRIMARY_SP" "$bucket_url" || true)
+  out=$(exec_moca_cmd_signed bucket create --tags="$tags" --primarySP "$PRIMARY_SP" "$bucket_url" || true)
   if ! echo "$out" | grep -q "make_bucket:\|$bucket_name"; then
     echo "  WARN: create output unexpected: $(echo "$out" | head -3)"
     trap - EXIT
@@ -110,26 +111,26 @@ run_moca_cmd_bucket_full() {
   wait_for_tx 2
 
   echo "  Step 5: update visibility..."
-  exec_moca_cmd bucket update --visibility=private "$bucket_url" >/dev/null 2>&1 || true
+  exec_moca_cmd_signed bucket update --visibility=private "$bucket_url" >/dev/null 2>&1 || true
   wait_for_tx 2
-  exec_moca_cmd bucket update --visibility=public-read "$bucket_url" >/dev/null 2>&1 || true
+  exec_moca_cmd_signed bucket update --visibility=public-read "$bucket_url" >/dev/null 2>&1 || true
   wait_for_tx 2
 
   echo "  Step 6: setTag..."
-  out=$(exec_moca_cmd bucket setTag --tags="$updated_tags" "$bucket_url" || true)
+  out=$(exec_moca_cmd_signed bucket setTag --tags="$updated_tags" "$bucket_url" || true)
   if [ -n "$out" ]; then
     echo "$out" | head -5
   fi
   wait_for_tx 3
 
   echo "  Step 7-8: buy-quota + verify..."
-  out=$(exec_moca_cmd bucket buy-quota --chargedQuota 1000000000 "$bucket_url" || true)
+  out=$(exec_moca_cmd_signed bucket buy-quota --chargedQuota 1000000000 "$bucket_url" || true)
   echo "$out" | head -5
   wait_for_tx 3
   exec_moca_cmd bucket get-quota "$bucket_url" 2>/dev/null | head -15 || true
 
   echo "  Step 9: remove bucket..."
-  out=$(exec_moca_cmd bucket rm "$bucket_url" || true)
+  out=$(exec_moca_cmd_signed bucket rm "$bucket_url" || true)
   echo "$out" | head -5
   wait_for_tx 3
 

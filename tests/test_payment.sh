@@ -10,8 +10,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 require_write_enabled "payment test"
+require_test_key
 
-OWNER_ADDR=$(exec_mocad keys show testaccount -a --keyring-backend test 2>/dev/null || echo "")
+OWNER_ADDR=$(exec_mocad keys show "$TEST_KEY" -a --keyring-backend test 2>/dev/null || echo "")
 
 run_moca_cmd_payment() {
   echo "Testing payment module (moca-cmd path)..."
@@ -27,7 +28,7 @@ run_moca_cmd_payment() {
   fi
 
   print_test_section "payment-account create"
-  out=$(exec_moca_cmd payment-account create || true)
+  out=$(exec_moca_cmd_signed payment-account create || true)
   if ! echo "$out" | grep -qiE "txHash|transaction"; then
     echo "WARN: payment-account create output unexpected, falling back to mocad"
     return 1
@@ -53,7 +54,7 @@ run_moca_cmd_payment() {
 
   dep_amt="1000000000000000000"
   print_test_section "deposit"
-  out=$(exec_moca_cmd payment-account deposit --toAddress "$pa_addr" --amount "$dep_amt" || true)
+  out=$(exec_moca_cmd_signed payment-account deposit --toAddress "$pa_addr" --amount "$dep_amt" || true)
   echo "$out" | head -6
   wait_for_block 5
 
@@ -63,7 +64,7 @@ run_moca_cmd_payment() {
 
   withdraw_amt="500000000000000000"
   print_test_section "withdraw"
-  out=$(exec_moca_cmd payment-account withdraw --fromAddress "$pa_addr" --amount "$withdraw_amt" || true)
+  out=$(exec_moca_cmd_signed payment-account withdraw --fromAddress "$pa_addr" --amount "$withdraw_amt" || true)
   echo "$out" | head -6
   wait_for_block 5
 
@@ -80,7 +81,7 @@ run_mocad_payment() {
   echo "Testing payment module (mocad path)..."
   local CREATE_RESULT
   CREATE_RESULT=$(exec_mocad tx payment create-payment-account \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -121,7 +122,7 @@ run_mocad_payment() {
 
   DEPOSIT_AMOUNT="1000000000000000000"
   exec_mocad tx payment deposit "$PA_ADDR" "${DEPOSIT_AMOUNT}" \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -136,7 +137,7 @@ run_mocad_payment() {
 
   WITHDRAW_AMOUNT="500000000000000000"
   exec_mocad tx payment withdraw "$PA_ADDR" "${WITHDRAW_AMOUNT}" \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \

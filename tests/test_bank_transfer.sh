@@ -8,31 +8,26 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 require_write_enabled "bank transfer test"
+require_test_key
 
 echo "Testing bank transfer..."
 
-# Get validator-0 address (sender)
-SENDER=$(exec_mocad keys show validator-0 -a --keyring-backend test)
-echo "  Sender: $SENDER"
+# Sender = test key, receiver = a random fresh address
+SENDER=$(get_key_address "$TEST_KEY")
+echo "  Sender ($TEST_KEY): $SENDER"
 
-# Get testaccount address (receiver) — created with known mnemonic in genesis
-RECEIVER=$(exec_mocad keys show testaccount -a --keyring-backend test 2>/dev/null || echo "")
-if [ -z "$RECEIVER" ]; then
-  echo "SKIP: testaccount not found in keyring"
-  exit 0
-fi
-echo "  Receiver: $RECEIVER"
+# Generate a fresh receiver address to avoid state dependency
+RECEIVER="0x$(openssl rand -hex 20)"
+echo "  Receiver (fresh): $RECEIVER"
 
-# Query balances before
+# Query sender balance before
 SENDER_BEFORE=$(get_balance "$SENDER")
-RECEIVER_BEFORE=$(get_balance "$RECEIVER")
-echo "  Sender balance before:   $SENDER_BEFORE $DENOM"
-echo "  Receiver balance before: $RECEIVER_BEFORE $DENOM"
+echo "  Sender balance before: $SENDER_BEFORE $DENOM"
 
 # Send 1 MOCA (1e18 amoca)
 SEND_AMOUNT="1000000000000000000"
 echo "  Sending ${SEND_AMOUNT} ${DENOM}..."
-cosmos_tx bank send validator-0 "$RECEIVER" "${SEND_AMOUNT}${DENOM}" --from validator-0
+cosmos_tx bank send "$TEST_KEY" "$RECEIVER" "${SEND_AMOUNT}${DENOM}" --from "$TEST_KEY"
 wait_for_tx 5
 
 # Query balances after
@@ -42,6 +37,7 @@ echo "  Sender balance after:   $SENDER_AFTER $DENOM"
 echo "  Receiver balance after: $RECEIVER_AFTER $DENOM"
 
 # Verify receiver got the tokens
-assert_ne "$RECEIVER_AFTER" "$RECEIVER_BEFORE" "Receiver balance changed" || exit 1
+assert_ne "$RECEIVER_AFTER" "0" "Receiver has balance" || exit 1
+assert_ne "$SENDER_AFTER" "$SENDER_BEFORE" "Sender balance changed" || exit 1
 
 echo "PASS: Bank transfer successful"

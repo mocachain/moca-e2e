@@ -12,6 +12,15 @@ TM_RPC="${TM_RPC:-$RPC}"
 FEES="${FEES:-200000000000000amoca}"
 VALIDATOR_CONTAINER="${VALIDATOR_CONTAINER:-validator-0}"
 
+# Test key: for local use testaccount (created in genesis), for devnet/testnet use DEVNET_TEST_KEY
+if [ "${ENV:-local}" = "local" ]; then
+  TEST_KEY="${TEST_KEY:-testaccount}"
+  SENDER_KEY="${SENDER_KEY:-validator-0}"
+else
+  TEST_KEY="${DEVNET_TEST_KEY:-${TEST_KEY:-}}"
+  SENDER_KEY="${DEVNET_TEST_KEY:-${SENDER_KEY:-}}"
+fi
+
 # Cosmos CLI prefers tcp:// for local CometBFT RPC.
 if [[ "$TM_RPC" == http://* ]]; then
   TM_RPC="tcp://${TM_RPC#http://}"
@@ -35,13 +44,23 @@ require_write_enabled() {
 }
 
 # --- Execute mocad either from docker validator or local PATH ---
+# Set MOCAD_HOME to point mocad at the keyring with your test key.
+# Example: MOCAD_HOME=~/.mocad-devnet make test ENV=devnet
+MOCAD_HOME="${MOCAD_HOME:-}"
+
 exec_mocad() {
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${VALIDATOR_CONTAINER}$"; then
     docker exec "$VALIDATOR_CONTAINER" mocad "$@" --home /root/.mocad 2>/dev/null
     return $?
   fi
   if command -v mocad >/dev/null 2>&1; then
-    mocad "$@" 2>/dev/null
+    local extra_args=()
+    [ -n "$MOCAD_HOME" ] && extra_args+=(--home "$MOCAD_HOME")
+    # For remote envs, pass --evm-node to avoid localhost:8545 fallback
+    if [ "${ENV:-local}" != "local" ] && [ -n "${EVM_RPC:-}" ]; then
+      extra_args+=(--evm-node "$EVM_RPC")
+    fi
+    mocad "$@" "${extra_args[@]}" 2>/dev/null
     return $?
   fi
   echo "ERROR: mocad not found (no ${VALIDATOR_CONTAINER} container and no local mocad on PATH)" >&2
@@ -73,6 +92,36 @@ get_bonded_validator_count() {
 
 get_validator_operator_addrs() {
   get_validators_json | jq -r '.validators[].operator_address' 2>/dev/null
+}
+
+# --- Account helpers ---
+# Resolve a key name to an address. Works with docker keyring (local) or host keyring (devnet).
+get_key_address() {
+  local key="$1"
+  exec_mocad keys show "$key" -a --keyring-backend test 2>/dev/null || echo ""
+}
+
+require_test_key() {
+  if [ -z "$TEST_KEY" ]; then
+    echo "SKIP: no test key configured (set DEVNET_TEST_KEY=<keyname> for devnet)"
+    exit 0
+  fi
+  local addr
+  addr=$(get_key_address "$TEST_KEY")
+  if [ -z "$addr" ]; then
+    echo "SKIP: test key '$TEST_KEY' not found in keyring"
+    exit 0
+  fi
+  # On remote envs, check the account has enough funds (~3 MOCA minimum for full suite)
+  if [ "${ENV:-local}" != "local" ]; then
+    local bal
+    bal=$(get_balance "$addr")
+    # 3 MOCA = 3000000000000000000 amoca
+    if [ -n "$bal" ] && [ "$bal" != "0" ] && [ ${#bal} -lt 19 ]; then
+      echo "WARN: $TEST_KEY balance is low ($bal $DENOM). Full write suite needs ~3 MOCA."
+      echo "      Fund $addr with at least 3000000000000000000 amoca before running."
+    fi
+  fi
 }
 
 # --- Transaction helpers ---
@@ -122,10 +171,20 @@ assert_ne() {
   fi
 }
 
-# --- moca-cmd helpers (optional, best-effort) ---
+# --- moca-cmd helpers ---
+# MOCA_CMD_HOME: keystore home for moca-cmd (separate from mocad keyring)
+# MOCA_CMD_PASSWORD_FILE: password file for the keystore
+MOCA_CMD_HOME="${MOCA_CMD_HOME:-}"
+MOCA_CMD_PASSWORD_FILE="${MOCA_CMD_PASSWORD_FILE:-}"
+MOCA_CMD_BIN="${MOCA_CMD_BIN:-}"
+
 resolve_moca_cmd() {
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^moca-cmd$'; then
     echo "docker:moca-cmd"
+    return 0
+  fi
+  if [ -n "$MOCA_CMD_BIN" ] && [ -x "$MOCA_CMD_BIN" ]; then
+    echo "local:$MOCA_CMD_BIN"
     return 0
   fi
   if command -v moca-cmd >/dev/null 2>&1; then
@@ -135,15 +194,45 @@ resolve_moca_cmd() {
   return 1
 }
 
+# exec_moca_cmd: run moca-cmd with network flags (read-only queries, no signing)
 exec_moca_cmd() {
-  local target
+  local target bin
   target="$(resolve_moca_cmd 2>/dev/null)" || return 127
   if [[ "$target" == docker:* ]]; then
     local container="${target#docker:}"
     docker exec "$container" moca-cmd "$@" 2>/dev/null
     return $?
   fi
-  moca-cmd "$@" 2>/dev/null
+  bin="${target#local:}"
+  local net_args=()
+  if [ "${ENV:-local}" != "local" ]; then
+    [ -n "${RPC:-}" ] && net_args+=(--rpcAddr "$RPC")
+    [ -n "${CHAIN_ID:-}" ] && net_args+=(--chainId "$CHAIN_ID")
+    [ -n "${EVM_RPC:-}" ] && net_args+=(--evmRpcAddr "$EVM_RPC")
+  fi
+  "$bin" "${net_args[@]}" "$@" 2>/dev/null
+}
+
+# exec_moca_cmd_signed: run moca-cmd with network flags + keystore (for write operations)
+# IMPORTANT: do NOT pass --host — moca-cmd resolves SP endpoints from chain automatically
+exec_moca_cmd_signed() {
+  local target bin
+  target="$(resolve_moca_cmd 2>/dev/null)" || return 127
+  if [[ "$target" == docker:* ]]; then
+    local container="${target#docker:}"
+    docker exec "$container" moca-cmd "$@" 2>/dev/null
+    return $?
+  fi
+  bin="${target#local:}"
+  local args=()
+  if [ "${ENV:-local}" != "local" ]; then
+    [ -n "${RPC:-}" ] && args+=(--rpcAddr "$RPC")
+    [ -n "${CHAIN_ID:-}" ] && args+=(--chainId "$CHAIN_ID")
+    [ -n "${EVM_RPC:-}" ] && args+=(--evmRpcAddr "$EVM_RPC")
+  fi
+  [ -n "$MOCA_CMD_HOME" ] && args+=(--home "$MOCA_CMD_HOME")
+  [ -n "$MOCA_CMD_PASSWORD_FILE" ] && args+=(-p "$MOCA_CMD_PASSWORD_FILE")
+  "$bin" "${args[@]}" "$@" 2>/dev/null
 }
 
 # --- Storage test helpers (aligned with devcontainer storage_utils) ---

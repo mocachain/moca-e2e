@@ -10,9 +10,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 require_write_enabled "storage policy test"
+require_test_key
 
-OWNER_ADDR=$(exec_mocad keys show testaccount -a --keyring-backend test 2>/dev/null || echo "")
-GRANTEE_ADDR=$(exec_mocad keys show validator-0 -a --keyring-backend test 2>/dev/null || echo "")
+OWNER_ADDR=$(exec_mocad keys show "$TEST_KEY" -a --keyring-backend test 2>/dev/null || echo "")
+GRANTEE_ADDR=$(exec_mocad keys show "$SENDER_KEY" -a --keyring-backend test 2>/dev/null || echo "")
 
 if [ -z "$OWNER_ADDR" ] || [ -z "$GRANTEE_ADDR" ]; then
   echo "SKIP: required accounts not found"
@@ -41,7 +42,7 @@ run_mocad_policy() {
   exec_mocad tx storage create-bucket "$bucket_name" \
     --primary-sp-address "$PRIMARY_SP" \
     --visibility VISIBILITY_TYPE_PRIVATE \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -55,7 +56,7 @@ run_mocad_policy() {
   exec_mocad tx storage put-policy "$bucket_name" \
     --grantee "$GRANTEE_ADDR" \
     --actions "ACTION_GET_OBJECT" \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -64,7 +65,7 @@ run_mocad_policy() {
   wait_for_tx 3
 
   exec_mocad tx storage delete-bucket "$bucket_name" \
-    --from testaccount \
+    --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -92,8 +93,8 @@ run_moca_cmd_policy_full() {
   local group_res="grn:g:${grantee}:${group_name}"
 
   cleanup() {
-    exec_moca_cmd bucket rm "$bucket_url" >/dev/null 2>&1 || true
-    exec_moca_cmd group rm "$group_name" >/dev/null 2>&1 || true
+    exec_moca_cmd_signed bucket rm "$bucket_url" >/dev/null 2>&1 || true
+    exec_moca_cmd_signed group rm "$group_name" >/dev/null 2>&1 || true
   }
   trap cleanup EXIT
 
@@ -101,7 +102,7 @@ run_moca_cmd_policy_full() {
 
   print_test_section "create bucket"
   local out
-  out=$(exec_moca_cmd bucket create --primarySP "$PRIMARY_SP" "$bucket_url" || true)
+  out=$(exec_moca_cmd_signed bucket create --primarySP "$PRIMARY_SP" "$bucket_url" || true)
   if ! echo "$out" | grep -q "make_bucket:\|$bucket_name"; then
     echo "WARN: bucket create failed for policy test"
     trap - EXIT
@@ -112,7 +113,7 @@ run_moca_cmd_policy_full() {
   OBJECT_CREATED=false
   print_test_section "put object (optional)"
   echo "content" > "/tmp/${object_name}"
-  out=$(exec_moca_cmd object put "/tmp/${object_name}" "$object_path" || true)
+  out=$(exec_moca_cmd_signed object put "/tmp/${object_name}" "$object_path" || true)
   if echo "$out" | grep -qiE "created|sealing|txHash"; then
     OBJECT_CREATED=true
   fi
@@ -121,14 +122,14 @@ run_moca_cmd_policy_full() {
 
   GROUP_CREATED=false
   print_test_section "create group (optional)"
-  out=$(exec_moca_cmd group create "$group_name" || true)
+  out=$(exec_moca_cmd_signed group create "$group_name" || true)
   if echo "$out" | grep -qiE "make_group|group id"; then
     GROUP_CREATED=true
   fi
   wait_for_block 3
 
   print_test_section "bucket policy put / ls"
-  out=$(exec_moca_cmd policy put --grantee "$grantee" --actions "createObj,getObj" "$bucket_res" || true)
+  out=$(exec_moca_cmd_signed policy put --grantee "$grantee" --actions "createObj,getObj" "$bucket_res" || true)
   if ! echo "$out" | grep -qiE "txn hash|txHash|hash"; then
     echo "WARN: bucket policy put may have failed"
   fi
@@ -137,7 +138,7 @@ run_moca_cmd_policy_full() {
 
   if [ "$OBJECT_CREATED" = true ]; then
     print_test_section "object policy put / ls"
-    out=$(exec_moca_cmd policy put --grantee "$grantee" --actions "get,delete" "$object_res" || true)
+    out=$(exec_moca_cmd_signed policy put --grantee "$grantee" --actions "get,delete" "$object_res" || true)
     echo "$out" | head -5
     wait_for_block 3
     exec_moca_cmd policy ls --grantee "$grantee" "$object_res" 2>/dev/null | head -15 || true
@@ -145,20 +146,20 @@ run_moca_cmd_policy_full() {
 
   if [ "$GROUP_CREATED" = true ]; then
     print_test_section "group policy put / ls / rm"
-    out=$(exec_moca_cmd policy put --grantee "$grantee" --actions "update" "$group_res" || true)
+    out=$(exec_moca_cmd_signed policy put --grantee "$grantee" --actions "update" "$group_res" || true)
     echo "$out" | head -5
     wait_for_block 3
     exec_moca_cmd policy ls --grantee "$grantee" "$group_res" 2>/dev/null | head -10 || true
-    exec_moca_cmd policy rm --grantee "$grantee" "$group_res" 2>/dev/null || true
+    exec_moca_cmd_signed policy rm --grantee "$grantee" "$group_res" 2>/dev/null || true
     wait_for_block 3
   fi
 
   print_test_section "bucket policy rm"
-  exec_moca_cmd policy rm --grantee "$grantee" "$bucket_res" 2>/dev/null || true
+  exec_moca_cmd_signed policy rm --grantee "$grantee" "$bucket_res" 2>/dev/null || true
   wait_for_block 3
 
-  exec_moca_cmd group rm "$group_name" >/dev/null 2>&1 || true
-  exec_moca_cmd bucket rm "$bucket_url" >/dev/null 2>&1 || true
+  exec_moca_cmd_signed group rm "$group_name" >/dev/null 2>&1 || true
+  exec_moca_cmd_signed bucket rm "$bucket_url" >/dev/null 2>&1 || true
   trap - EXIT
   echo "PASS: storage policy comprehensive test (moca-cmd path)"
 }

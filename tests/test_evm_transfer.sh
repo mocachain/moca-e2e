@@ -8,50 +8,53 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 require_write_enabled "EVM transfer test"
+require_test_key
 
-echo "Testing native EVM transfer..."
-
-# Get test account private key from metadata
-METADATA="$(dirname "$SCRIPT_DIR")/test-results/metadata.json"
-if [ ! -f "$METADATA" ]; then
-  # Try getting from shared volume
-  PRIVKEY=$(docker exec "$VALIDATOR_CONTAINER" cat /shared/metadata.json 2>/dev/null | jq -r '.test_account.evm_privkey // empty' 2>/dev/null || echo "")
-else
-  PRIVKEY=$(jq -r '.test_account.evm_privkey // empty' "$METADATA" 2>/dev/null || echo "")
-fi
-
-if [ -z "$PRIVKEY" ] || [ "$PRIVKEY" = "null" ]; then
-  echo "SKIP: No test account private key available"
+if ! command -v cast &>/dev/null; then
+  echo "SKIP: cast (Foundry) not installed"
   exit 0
 fi
 
-# Get sender address from private key via EVM RPC
-SENDER_ADDR=$(curl -sf "$EVM_RPC" -X POST -H "Content-Type: application/json" \
-  -d "{\"jsonrpc\":\"2.0\",\"method\":\"eth_accounts\",\"params\":[],\"id\":1}" | \
-  jq -r '.result[0] // empty' 2>/dev/null || echo "")
+echo "Testing native EVM transfer..."
 
-# Generate a random recipient address
+# Get private key: from metadata (local) or from keyring (devnet)
+PRIVKEY=""
+METADATA="$(dirname "$SCRIPT_DIR")/test-results/metadata.json"
+if [ -f "$METADATA" ]; then
+  PRIVKEY=$(jq -r '.test_account.evm_privkey // empty' "$METADATA" 2>/dev/null || echo "")
+fi
+if [ -z "$PRIVKEY" ] || [ "$PRIVKEY" = "null" ]; then
+  PRIVKEY=$(docker exec "$VALIDATOR_CONTAINER" cat /shared/metadata.json 2>/dev/null | jq -r '.test_account.evm_privkey // empty' 2>/dev/null || echo "")
+fi
+if [ -z "$PRIVKEY" ] || [ "$PRIVKEY" = "null" ]; then
+  # Try exporting from local keyring (devnet)
+  PRIVKEY=$(exec_mocad keys unsafe-export-eth-key "$TEST_KEY" --keyring-backend test 2>/dev/null || echo "")
+fi
+
+if [ -z "$PRIVKEY" ] || [ "$PRIVKEY" = "null" ]; then
+  echo "SKIP: Cannot export private key for $TEST_KEY"
+  exit 0
+fi
+
+SENDER=$(cast wallet address "0x${PRIVKEY}" 2>/dev/null)
+echo "  Sender: $SENDER"
+
+# Generate a random recipient
 RECIPIENT="0x$(openssl rand -hex 20)"
 echo "  Recipient: $RECIPIENT"
 
-# Check balance before via EVM RPC
+# Check balance before
 BALANCE_BEFORE=$(curl -sf "$EVM_RPC" -X POST -H "Content-Type: application/json" \
   -d "{\"jsonrpc\":\"2.0\",\"method\":\"eth_getBalance\",\"params\":[\"${RECIPIENT}\",\"latest\"],\"id\":1}" | \
   jq -r '.result // "0x0"' 2>/dev/null)
 echo "  Recipient balance before: $BALANCE_BEFORE"
 
-# Send 0.01 native token (1e16 wei) via EVM
-# Use eth_sendTransaction if accounts are unlocked, otherwise use cast if available
-if command -v cast &>/dev/null; then
-  echo "  Sending via cast..."
-  cast send "$RECIPIENT" --value "10000000000000000" \
-    --private-key "0x${PRIVKEY}" --rpc-url "$EVM_RPC" \
-    --chain-id "$EVM_CHAIN_ID" 2>&1 | tail -1 || echo "  cast send may have failed"
-  sleep 3
-else
-  echo "  SKIP: cast (Foundry) not installed, cannot sign EVM transaction"
-  exit 0
-fi
+# Send 0.001 MOCA (1e15 wei) — small to preserve funds
+echo "  Sending via cast..."
+cast send "$RECIPIENT" --value "10000000000000000" \
+  --private-key "0x${PRIVKEY}" --rpc-url "$EVM_RPC" \
+  --chain-id "$EVM_CHAIN_ID" 2>&1 | tail -1 || echo "  cast send may have failed"
+sleep 5
 
 # Check balance after
 BALANCE_AFTER=$(curl -sf "$EVM_RPC" -X POST -H "Content-Type: application/json" \
@@ -60,7 +63,7 @@ BALANCE_AFTER=$(curl -sf "$EVM_RPC" -X POST -H "Content-Type: application/json" 
 echo "  Recipient balance after: $BALANCE_AFTER"
 
 assert_ne "$BALANCE_AFTER" "$BALANCE_BEFORE" "EVM balance changed" || {
-  echo "  WARN: Balance didn't change — EVM transfer may have failed"
+  echo "  WARN: Balance didn't change"
   exit 0
 }
 

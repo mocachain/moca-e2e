@@ -36,16 +36,16 @@ TEST_FILE="$(create_test_file "/tmp/${OBJECT_NAME}" "seal test $(date)")"
 
 cleanup() {
   rm -f "$TEST_FILE"
-  exec_moca_cmd bucket rm "$BUCKET_URL" >/dev/null 2>&1 || true
+  exec_moca_cmd_signed bucket rm "$BUCKET_URL" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
 echo "Testing object seal progress (bucket=$BUCKET_NAME)..."
 
-exec_moca_cmd bucket create --primarySP "$PRIMARY_SP" "$BUCKET_URL" >/dev/null
+exec_moca_cmd_signed bucket create --primarySP "$PRIMARY_SP" "$BUCKET_URL" >/dev/null
 wait_for_block 3
 
-exec_moca_cmd object put --contentType "application/octet-stream" "$TEST_FILE" "$OBJECT_REL" >/dev/null || {
+exec_moca_cmd_signed object put --contentType "application/octet-stream" "$TEST_FILE" "$OBJECT_REL" >/dev/null || {
   echo "WARN: object put failed"
   exit 0
 }

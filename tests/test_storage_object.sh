@@ -20,7 +20,7 @@ if [ "$NUM_SPS" -le 0 ]; then
   exit 0
 fi
 
-PRIMARY_SP=$(echo "$SP_CHECK" | jq -r '.sps[0].operator_address // empty' 2>/dev/null || true)
+PRIMARY_SP=$(first_in_service_sp_operator 2>/dev/null || true)
 if [ -z "$PRIMARY_SP" ]; then
   echo "SKIP: cannot resolve primary SP"
   exit 0
@@ -85,14 +85,17 @@ run_moca_cmd_object_full() {
   fi
   wait_for_block 4
 
-  print_test_section "Step 2: put object"
+  print_test_section "Step 2: put object (blocks until SEALED)"
+  # moca-cmd's object put polls HeadObject internally and only returns once the
+  # object has reached OBJECT_STATUS_SEALED (i.e. replicated + signed by secondary
+  # SPs). A non-zero exit means it either didn't reach SEALED or chain rejected
+  # the createObject tx — in both cases the assertion below should fail.
   out=$(exec_moca_cmd_signed object put --tags="$tags" --contentType "$content_type" "$object_file" "$object_path" || true)
-  if ! echo "$out" | grep -qiE "object.*created|created on chain|sealing|upload"; then
-    echo "WARN: object put may have failed"
-    trap - EXIT
-    exit 0
+  if ! echo "$out" | grep -qiE "object.*created|created on chain|upload"; then
+    echo "FAIL: object put did not reach uploaded/sealed state"
+    exit 1
   fi
-  wait_for_block 4
+  print_success "object put completed (SEALED)"
 
   print_test_section "Step 3: object head"
   out=$(exec_moca_cmd object head "$object_path" || true)

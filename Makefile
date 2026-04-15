@@ -1,4 +1,4 @@
-.PHONY: test setup teardown clone build generate help
+.PHONY: test setup teardown clone build generate help clean
 
 ENV ?= local
 TOPOLOGY ?= topology/default.yaml
@@ -21,8 +21,18 @@ test-stress: ## Stress test with mixed validator modes
 setup: ## Set up local docker-compose environment
 	./scripts/setup-env.sh $(ENV) $(STACK_FILE) $(TOPOLOGY)
 
-teardown: ## Tear down local environment
+teardown: ## Tear down local environment (containers + volumes + cloned repos)
 	./scripts/teardown.sh $(ENV)
+
+clean: teardown ## teardown + remove built images (mocad-local, moca-sp-local, moca-cmd-local, moca-genesis-init, compose-generated)
+	@docker rmi -f \
+		mocad-local:latest mocad-cosmovisor:latest \
+		moca-sp-local:latest moca-cmd-local:latest moca-genesis-init:latest 2>/dev/null || true
+	@docker images --format '{{.Repository}}:{{.Tag}}' \
+		| grep -E '^moca-e2e.*-(validator|sp|moca-cmd|genesis)' \
+		| xargs -r docker rmi -f 2>/dev/null || true
+	@docker image prune -f >/dev/null 2>&1 || true
+	@echo "=== Images cleaned ==="
 
 clone: ## Clone all repos at stack.yaml refs
 	./scripts/clone-repos.sh $(STACK_FILE)

@@ -26,12 +26,16 @@ validators:
     mode: docker
 
 storage_providers:
+  # Redundancy is 4 data + 2 parity chunks → primary + 6 unique secondaries = 7 SPs minimum.
+  # 8 gives a small rotation margin.
   - name: sp-0
   - name: sp-1
   - name: sp-2
   - name: sp-3
   - name: sp-4
   - name: sp-5
+  - name: sp-6
+  - name: sp-7
 
 services:
   mysql:

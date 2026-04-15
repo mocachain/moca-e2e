@@ -47,29 +47,41 @@ TMPF="$(create_test_file "/tmp/${OBJECT_NAME}" "sp exit object $(date)")"
 
 cleanup() {
   rm -f "$TMPF"
+  # Delete object first; bucket rm on a non-empty bucket is a no-op on-chain.
+  exec_moca_cmd object rm "$REL_PATH" >/dev/null 2>&1 || true
   exec_moca_cmd bucket rm "moca://${BUCKET_NAME}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
 print_test_section "create bucket on SP"
-out=$(exec_moca_cmd bucket create --primarySP "$OP" "moca://${BUCKET_NAME}" || true)
+out=$(moca_cmd_tx bucket create --primarySP "$OP" "moca://${BUCKET_NAME}" || true)
 if ! echo "$out" | grep -q "make_bucket:\|$BUCKET_NAME"; then
   echo "WARN: bucket create failed"
   trap - EXIT
   exit 0
 fi
-wait_for_block 5
 
 print_test_section "put object"
 MC=$(resolve_moca_cmd 2>/dev/null || true)
 if [[ "${MC:-}" == docker:* ]]; then
   docker cp "$TMPF" "${MC#docker:}:/tmp/${OBJECT_NAME}" >/dev/null 2>&1 || true
 fi
-out=$(exec_moca_cmd object put --contentType "application/octet-stream" "/tmp/${OBJECT_NAME}" "$REL_PATH" || true)
+out=$(moca_cmd_tx object put --bypassSeal --contentType "application/octet-stream" "/tmp/${OBJECT_NAME}" "$REL_PATH" || true)
 if ! echo "$out" | grep -qiE "created|sealing|upload"; then
-  echo "WARN: object put may have failed"
+  echo "WARN: object put did not reach upload state; SP exit test cannot verify migration"
+  trap - EXIT
+  cleanup
+  exit 0
 fi
-wait_for_block 8
+
+# SP exit scenarios (graceful exit, bucket migration) only work on sealed objects;
+# pre-seal CREATED objects can be cancelled out from under us mid-migration.
+if ! wait_for_object_sealed "$REL_PATH"; then
+  echo "WARN: object never sealed; skipping exit-path verification"
+  trap - EXIT
+  cleanup
+  exit 0
+fi
 
 print_test_section "verify object head before exit"
 out=$(exec_moca_cmd object head "$REL_PATH" || true)

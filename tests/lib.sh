@@ -140,6 +140,67 @@ wait_for_tx() {
   sleep "$seconds"
 }
 
+# _evm_rpc: one-shot JSON-RPC call. Prints .result as JSON (or empty on error).
+_evm_rpc() {
+  local method="$1" params="${2:-[]}" rpc="${EVM_RPC:-http://localhost:8545}"
+  curl -sf -H "Content-Type: application/json" \
+    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"${method}\",\"params\":${params}}" \
+    "$rpc" 2>/dev/null | jq -c '.result // empty' 2>/dev/null
+}
+
+# wait_for_evm_tx: wait until the sender's mempool has fully drained — i.e. the
+# next signed call from this account reads a nonce that matches what the chain
+# expects, with no pending tx in between.
+#
+# Critical: moca-cmd's `bucket create --tags=…` (and similar) can submit TWO
+# internal txs (CreateBucket + SetTag) and only print the first hash. Waiting
+# for the first hash's `latest` nonce to advance is not enough — the second tx
+# is still in mempool, and the next `object put` queries nonce N while mempool
+# already has a tx at N, so chain rejects with "invalid nonce; got N, expected N+1".
+#
+# The correct signal is pending_count == latest_count (mempool empty for sender):
+# every tx this account has submitted has been committed.
+#
+# Retries at 1s intervals (local block time). Gives up after `timeout` seconds.
+#
+# Usage: wait_for_evm_tx "$tx_hash" [timeout_seconds]
+# Returns 0 once mempool is drained for the sender, 1 on timeout.
+wait_for_evm_tx() {
+  local hash="${1:-}" timeout="${2:-5}"
+  [ -z "$hash" ] || [ "${hash#0x}" = "$hash" ] && return 1
+
+  local tx from deadline now pending_c latest_c
+  deadline=$(( $(date +%s) + timeout ))
+
+  while :; do
+    tx=$(_evm_rpc eth_getTransactionByHash "[\"$hash\"]")
+    if [ -n "$tx" ] && [ "$tx" != "null" ]; then
+      from=$(echo "$tx" | jq -r '.from')
+      [ -n "$from" ] && [ "$from" != "null" ] && break
+    fi
+    now=$(date +%s); [ "$now" -ge "$deadline" ] && return 1
+    sleep 1
+  done
+
+  while :; do
+    pending_c=$(_evm_rpc eth_getTransactionCount "[\"$from\",\"pending\"]")
+    latest_c=$(_evm_rpc eth_getTransactionCount "[\"$from\",\"latest\"]")
+    pending_c=${pending_c//\"/}; latest_c=${latest_c//\"/}
+    if [ -n "$pending_c" ] && [ "$pending_c" = "$latest_c" ] && [ "$pending_c" != "null" ]; then
+      return 0
+    fi
+    now=$(date +%s); [ "$now" -ge "$deadline" ] && return 1
+    sleep 1
+  done
+}
+
+# Extract the EVM tx hash from moca-cmd output ("transaction hash:  0x...").
+# Empty result means no hash was printed (query commands, errors, etc).
+extract_evm_tx_hash() {
+  echo "${1:-}" | grep -oE 'transaction hash:[[:space:]]+0x[0-9a-fA-F]{64}' \
+    | grep -oE '0x[0-9a-fA-F]{64}' | head -1
+}
+
 # wait_for_object_sealed: poll `moca-cmd object head <path>` until status reaches
 # OBJECT_STATUS_SEALED or timeout.
 #
@@ -235,7 +296,7 @@ exec_moca_cmd() {
   target="$(resolve_moca_cmd 2>/dev/null)" || return 127
   if [[ "$target" == docker:* ]]; then
     local container="${target#docker:}"
-    docker exec "$container" moca-cmd "$@" 2>/dev/null
+    docker exec "$container" moca-cmd -p /root/.moca-cmd/password.txt "$@" 2>/dev/null
     return $?
   fi
   bin="${target#local:}"
@@ -257,7 +318,7 @@ exec_moca_cmd_signed() {
   target="$(resolve_moca_cmd 2>/dev/null)" || return 127
   if [[ "$target" == docker:* ]]; then
     local container="${target#docker:}"
-    docker exec "$container" moca-cmd "$@" 2>/dev/null
+    docker exec "$container" moca-cmd -p /root/.moca-cmd/password.txt "$@" 2>/dev/null
     return $?
   fi
   bin="${target#local:}"
@@ -270,6 +331,39 @@ exec_moca_cmd_signed() {
   [ -n "$MOCA_CMD_HOME" ] && args+=(--home "$MOCA_CMD_HOME")
   [ -n "$MOCA_CMD_PASSWORD_FILE" ] && args+=(-p "$MOCA_CMD_PASSWORD_FILE")
   "$bin" "${args[@]}" "$@" 2>/dev/null
+}
+
+# moca_cmd_tx: signed call that additionally waits for the sender's mempool
+# to drain before returning. Prevents nonce-race on back-to-back signed calls
+# (moca-cmd queries Cosmos auth sequence at "latest", which lags pending txs;
+# some ops — like `bucket create --tags=…` — also emit an extra implicit tx
+# whose hash isn't printed, so a plain-hash wait misses it).
+#
+# Echoes moca-cmd output to stdout, returns moca-cmd's rc. Sets rc=1 if
+# mempool didn't drain in 5s (chain stuck / tx got dropped) or, when
+# CHECK_TX_STATUS=1, the tx receipt shows status=0x0.
+moca_cmd_tx() {
+  local out rc hash status
+  out=$(exec_moca_cmd_signed "$@")
+  rc=$?
+  hash=$(extract_evm_tx_hash "$out")
+  if [ -n "$hash" ]; then
+    if ! wait_for_evm_tx "$hash" 5 >/dev/null 2>&1; then
+      echo "  ERROR: wait_for_evm_tx timed out waiting for mempool to drain after $hash" >&2
+      rc=1
+    fi
+    if [ "${CHECK_TX_STATUS:-0}" = "1" ]; then
+      status=$(curl -sf -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","id":1,"method":"eth_getTransactionReceipt","params":["'"$hash"'"]}' \
+        "${EVM_RPC:-http://localhost:8545}" 2>/dev/null | jq -r '.result.status // empty' 2>/dev/null)
+      if [ "$status" = "0x0" ]; then
+        echo "  ERROR: tx $hash REVERTED on-chain (status=0x0)" >&2
+        rc=1
+      fi
+    fi
+  fi
+  printf '%s\n' "$out"
+  return $rc
 }
 
 # --- Storage test helpers (aligned with devcontainer storage_utils) ---

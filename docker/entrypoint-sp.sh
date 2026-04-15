@@ -82,6 +82,29 @@ sed -i "s|ChainID = '.*'|ChainID = '${CHAIN_ID}'|g" config.toml
 sed -i "s|ChainAddress = \[.*\]|ChainAddress = ['http://${RPC_HOST}:${RPC_PORT}']|g" config.toml
 sed -i "s|RpcAddress = \[.*\]|RpcAddress = ['http://${RPC_HOST}:8545']|g" config.toml
 
+# Patch config: gas limits & fees. Defaults dumped by moca-sp are all 0, which
+# makes the signer fall back to gas=1200 — below the chain's intrinsic minimum
+# (~23k), so every on-demand tx (GVG create, seal, delete) fails. Values below
+# match mocachain testnet-1 infra.
+for key in SealGasLimit RejectSealGasLimit DiscontinueBucketGasLimit \
+          CreateGlobalVirtualGroupGasLimit CompleteMigrateBucketGasLimit \
+          UpdateSPPriceGasLimit SwapOutGasLimit CompleteSwapOutGasLimit \
+          SPExitGasLimit CompleteSPExitGasLimit RejectMigrateBucketGasLimit \
+          DepositGasLimit DeleteGlobalVirtualGroupGasLimit \
+          DelegateCreateObjectGasLimit DelegateUpdateObjectContentGasLimit \
+          ReserveSwapInGasLimit CompleteSwapInGasLimit CancelSwapInGasLimit; do
+  sed -i "s|^${key} = 0$|${key} = 180000|" config.toml
+done
+for key in SealFeeAmount RejectSealFeeAmount DiscontinueBucketFeeAmount \
+          CreateGlobalVirtualGroupFeeAmount CompleteMigrateBucketFeeAmount \
+          UpdateSPPriceFeeAmount SwapOutFeeAmount CompleteSwapOutFeeAmount \
+          SPExitFeeAmount CompleteSPExitFeeAmount RejectMigrateBucketFeeAmount \
+          DepositFeeAmount DeleteGlobalVirtualGroupFeeAmount \
+          DelegateCreateObjectFeeAmount DelegateUpdateObjectContentFeeAmount \
+          ReserveSwapInFeeAmount CompleteSwapInFeeAmount CancelSwapInFeeAmount; do
+  sed -i "s|^${key} = 0$|${key} = 12000000|" config.toml
+done
+
 # Patch config: SpAccount
 sed -i "s|SpOperatorAddress = '.*'|SpOperatorAddress = '${SP_OPERATOR_ADDR}'|g" config.toml
 sed -i "s|OperatorPrivateKey = '.*'|OperatorPrivateKey = '${OPERATOR_KEY}'|g" config.toml

@@ -65,6 +65,19 @@ docker build \
   -f "$ROOT_DIR/docker/Dockerfile.init" \
   "$ROOT_DIR"
 
+# --- Build moca-cmd image (if cloned) ---
+if [ -d "$BUILD_DIR/moca-cmd" ]; then
+  echo "--- Building moca-cmd image ---"
+  docker build \
+    -t moca-cmd-local:latest \
+    -f "$ROOT_DIR/docker/Dockerfile.moca-cmd" \
+    --build-arg TARGETARCH="$ARCH" \
+    $TOKEN_ARG \
+    "$ROOT_DIR"
+else
+  echo "Warning: moca-cmd not cloned, skipping moca-cmd image build"
+fi
+
 echo ""
 echo "=== All images built ==="
-docker images | grep -E "(mocad-local|mocad-cosmovisor|moca-sp-local|moca-genesis-init)" || true
+docker images | grep -E "(mocad-local|mocad-cosmovisor|moca-sp-local|moca-genesis-init|moca-cmd-local)" || true

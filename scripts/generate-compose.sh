@@ -51,6 +51,7 @@ services:
 
   # === Genesis init (runs once, exits) ===
   genesis-init:
+    image: moca-genesis-init:latest
     build:
       context: .
       dockerfile: docker/Dockerfile.init
@@ -97,10 +98,10 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
   NAME=$(yq ".validators[$i].name" "$TOPOLOGY")
   MODE=$(yq ".validators[$i].mode" "$TOPOLOGY")
 
-  # Select Dockerfile based on mode
+  # Select Dockerfile + image tag based on mode
   case "$MODE" in
-    cosmovisor) DOCKERFILE="docker/Dockerfile.cosmovisor" ;;
-    *)          DOCKERFILE="docker/Dockerfile.mocad" ;;
+    cosmovisor) DOCKERFILE="docker/Dockerfile.cosmovisor"; VALIDATOR_IMAGE="mocad-cosmovisor:latest" ;;
+    *)          DOCKERFILE="docker/Dockerfile.mocad";      VALIDATOR_IMAGE="mocad-local:latest" ;;
   esac
 
   RPC_PORT=$((RPC_BASE + i))
@@ -113,6 +114,7 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
   cat >> "$OUTPUT" <<VALIDATOR
   # === Validator $i ($MODE) ===
   ${NAME}:
+    image: ${VALIDATOR_IMAGE}
     build:
       context: .
       dockerfile: ${DOCKERFILE}
@@ -155,6 +157,7 @@ for i in $(seq 0 $((NUM_SPS - 1))); do
   cat >> "$OUTPUT" <<SP
   # === Storage Provider $i ===
   ${NAME}:
+    image: moca-sp-local:latest
     build:
       context: .
       dockerfile: docker/Dockerfile.sp
@@ -192,7 +195,43 @@ for i in $(seq 0 $((NUM_SPS - 1))); do
 SP
 done
 
+# === moca-cmd sidecar ===
+# Always emitted: tests exec into this container to drive storage/SP write flows.
+# Idles until `docker exec moca-cmd moca-cmd ...` is invoked.
+cat >> "$OUTPUT" <<MOCACMD
+  # === moca-cmd CLI sidecar ===
+  moca-cmd:
+    image: moca-cmd-local:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.moca-cmd
+    container_name: moca-cmd
+    environment:
+      - RPC_HOST=validator-0
+      - RPC_PORT=26657
+      - EVM_RPC_PORT=8545
+      - CHAIN_ID=${CHAIN_ID}
+    volumes:
+      # Share /tmp so the host-side test runner can drop payload files here
+      # and docker-exec'd moca-cmd reads them by the same path.
+      - /tmp:/tmp
+    depends_on:
+      validator-0:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "test", "-f", "/root/.moca-cmd/account/defaultKey"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+      start_period: 30s
+    restart: on-failure
+    networks:
+      - moca-e2e
+
+MOCACMD
+
 echo "=== Generated $OUTPUT ==="
 echo "  Validators: $NUM_VALIDATORS"
 echo "  Storage Providers: $NUM_SPS"
+echo "  moca-cmd: enabled (sidecar)"
 echo "  Chain ID: $CHAIN_ID"

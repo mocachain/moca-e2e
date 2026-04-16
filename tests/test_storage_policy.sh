@@ -28,8 +28,8 @@ fi
 
 SP_JSON=$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "{}")
 NUM_SPS=$(echo "$SP_JSON" | jq '.sps | length // 0' 2>/dev/null || echo "0")
-if [ "$NUM_SPS" -le 0 ]; then
-  echo "SKIP: no SPs registered"
+if [ "$NUM_SPS" -lt 3 ]; then
+  echo "SKIP: policy ops need primary + 2 secondaries (have ${NUM_SPS} SPs)"
   exit 0
 fi
 PRIMARY_SP=$(first_in_service_sp_operator 2>/dev/null || true)
@@ -48,7 +48,7 @@ run_mocad_policy() {
     --node "$TM_RPC" \
     --fees "$FEES" \
     -y 2>/dev/null || {
-    echo "PASS: policy mocad path (bucket create failed)"
+    echo "SKIP: mocad-only path cannot complete bucket create (install moca-cmd)"
     exit 0
   }
   wait_for_tx 5

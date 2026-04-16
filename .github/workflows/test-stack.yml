@@ -109,6 +109,20 @@ jobs:
           echo "All SPs are healthy"
           $COMPOSE ps
 
+      - name: Start moca-cmd sidecar
+        timeout-minutes: 2
+        run: |
+          $COMPOSE up -d --no-deps moca-cmd
+          # Wait for entrypoint to import the testaccount key
+          for i in $(seq 1 30); do
+            if docker exec moca-cmd test -f /root/.moca-cmd/account/defaultKey 2>/dev/null; then
+              echo "moca-cmd ready: $(docker exec moca-cmd cat /root/.moca-cmd/account/defaultKey)"
+              break
+            fi
+            [ "$i" -eq 30 ] && { echo "moca-cmd failed to bootstrap"; docker logs moca-cmd; exit 1; }
+            sleep 2
+          done
+
       - name: Run E2E tests
         timeout-minutes: 15
         run: ./scripts/run-suite.sh local config/local.yaml

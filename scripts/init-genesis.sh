@@ -130,6 +130,16 @@ mocad add-genesis-account "$TEST_ADDR" "${GENESIS_ACCOUNT_BALANCE}${DENOM}" \
 
 echo "  testaccount: addr=$TEST_ADDR"
 
+# Pre-register the EVM burn address. The moca storage precompile internally
+# mint's to 0x...dEaD (payment escrow burn), and on Evmos-based chains an
+# unregistered account causes the precompile to revert with:
+#   "account 0x...dEaD does not exist: unknown address"
+# moca-devcontainer's init-validator0.sh seeds this too (localnet/validator/init-validator0.sh:40).
+DEAD_ADDR="0x000000000000000000000000000000000000dEaD"
+mocad add-genesis-account "$DEAD_ADDR" "1${DENOM}" \
+  --home "$VALIDATOR_0_HOME" --keyring-backend "$KEYRING" 2>/dev/null || true
+echo "  burn address: $DEAD_ADDR (pre-registered)"
+
 # --- Step 4: Generate SP keys and add genesis accounts ---
 echo "--- Step 4: Generate SP keys ---"
 

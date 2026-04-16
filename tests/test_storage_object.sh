@@ -15,8 +15,8 @@ require_write_enabled "storage object test"
 SP_CHECK=$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "")
 NUM_SPS=$(echo "$SP_CHECK" | jq -r '.sps | length // 0' 2>/dev/null || echo "0")
 NUM_SPS="${NUM_SPS:-0}"
-if [ "$NUM_SPS" -le 0 ]; then
-  echo "SKIP: no storage providers found"
+if [ "$NUM_SPS" -lt 3 ]; then
+  echo "SKIP: object ops need primary + 2 secondaries (have ${NUM_SPS} SPs)"
   exit 0
 fi
 
@@ -43,7 +43,7 @@ run_mocad_object_smoke() {
     --fees "$FEES" \
     -y 2>/dev/null || echo "FAILED")
   if echo "$cr" | grep -q "FAILED\|Error\|error"; then
-    echo "PASS: mocad bucket create attempted (install moca-cmd for full object test)"
+    echo "SKIP: mocad bucket create failed; object upload requires moca-cmd"
     exit 0
   fi
   wait_for_tx 5
@@ -76,14 +76,16 @@ run_moca_cmd_object_full() {
   trap cleanup EXIT
 
   print_test_section "Step 1: create bucket"
+  # moca_cmd_tx waits for the sender's mempool to drain before returning so the
+  # subsequent object put doesn't race on nonce (bucket-create-with-tags emits
+  # an implicit second tx whose hash isn't printed).
   local out
-  out=$(exec_moca_cmd_signed bucket create --primarySP "$PRIMARY_SP" --tags="$tags" "$bucket_url" || true)
+  out=$(moca_cmd_tx bucket create --primarySP "$PRIMARY_SP" --tags="$tags" "$bucket_url" || true)
   if ! echo "$out" | grep -q "make_bucket:\|$bucket_name"; then
     echo "WARN: bucket create output unexpected"
     trap - EXIT
     exit 0
   fi
-  wait_for_block 4
 
   print_test_section "Step 2: put object (blocks until SEALED)"
   # moca-cmd's object put polls HeadObject internally and only returns once the

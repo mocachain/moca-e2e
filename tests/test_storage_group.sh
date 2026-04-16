@@ -40,8 +40,9 @@ run_mocad_group_smoke() {
     -y 2>/dev/null || echo "FAILED")
 
   if echo "$create_result" | grep -q "FAILED\|Error\|error"; then
-    echo "PASS: group creation attempted (failed or skipped)"
-    exit 0
+    echo "FAIL: group creation failed on mocad path (group does not need SP; this is a real error)"
+    echo "$create_result" | tail -5
+    exit 1
   fi
   wait_for_tx 5
 

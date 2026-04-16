@@ -17,8 +17,8 @@ fi
 
 SP_CHECK=$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "")
 NUM_SPS=$(echo "$SP_CHECK" | jq -r '.sps | length // 0' 2>/dev/null || echo "0")
-if [ "$NUM_SPS" -le 0 ]; then
-  echo "SKIP: no storage providers"
+if [ "$NUM_SPS" -lt 3 ]; then
+  echo "SKIP: object seal needs primary + 2 secondaries (have ${NUM_SPS} SPs)"
   exit 0
 fi
 

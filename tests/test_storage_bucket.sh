@@ -18,8 +18,8 @@ SP_CHECK=$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 
 NUM_SPS=$(echo "$SP_CHECK" | jq -r '.sps | length // 0' 2>/dev/null || echo "0")
 NUM_SPS="${NUM_SPS:-0}"
 
-if [ "$NUM_SPS" -le 0 ]; then
-  echo "SKIP: no SPs registered — bucket operations need at least one SP"
+if [ "$NUM_SPS" -lt 3 ]; then
+  echo "SKIP: bucket ops need primary + 2 secondaries (have ${NUM_SPS} SPs)"
   exit 0
 fi
 
@@ -49,7 +49,7 @@ run_mocad_bucket_smoke() {
 
   if echo "$create_result" | grep -q "FAILED\|Error\|error"; then
     echo "  WARN: bucket create failed (SP may not be fully operational)"
-    echo "PASS: bucket create attempted"
+    echo "SKIP: mocad-only path cannot complete without SP off-chain approval (install moca-cmd)"
     exit 0
   fi
 

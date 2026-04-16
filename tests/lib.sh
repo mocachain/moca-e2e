@@ -289,8 +289,8 @@ resolve_moca_cmd() {
 }
 
 # exec_moca_cmd: run moca-cmd with network flags (read-only queries, no signing).
-# NOTE: moca-cmd decrypts the default key on every invocation (even reads like
-# head/ls/get-quota), so MOCA_CMD_HOME / MOCA_CMD_PASSWORD_FILE must pass through.
+# -p is safe to pass unconditionally: moca-cmd only reads the password file when
+# IsQueryCmd=false (see client_moca.go NewClient); queries skip parseKeystore.
 exec_moca_cmd() {
   local target bin
   target="$(resolve_moca_cmd 2>/dev/null)" || return 127

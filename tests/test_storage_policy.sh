@@ -32,7 +32,7 @@ if [ "$NUM_SPS" -le 0 ]; then
   echo "SKIP: no SPs registered"
   exit 0
 fi
-PRIMARY_SP=$(echo "$SP_JSON" | jq -r '.sps[0].operator_address' 2>/dev/null)
+PRIMARY_SP=$(first_in_service_sp_operator 2>/dev/null || true)
 
 run_mocad_policy() {
   local bucket_name
@@ -113,12 +113,13 @@ run_moca_cmd_policy_full() {
   OBJECT_CREATED=false
   print_test_section "put object (optional)"
   echo "content" > "/tmp/${object_name}"
+  # moca-cmd returns once the object is SEALED (replicated + signed by secondary
+  # SPs), so we don't need a separate seal poll here.
   out=$(exec_moca_cmd_signed object put "/tmp/${object_name}" "$object_path" || true)
-  if echo "$out" | grep -qiE "created|sealing|txHash"; then
+  if echo "$out" | grep -qiE "created|txHash"; then
     OBJECT_CREATED=true
   fi
   rm -f "/tmp/${object_name}"
-  wait_for_block 4
 
   GROUP_CREATED=false
   print_test_section "create group (optional)"

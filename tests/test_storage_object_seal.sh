@@ -22,7 +22,7 @@ if [ "$NUM_SPS" -le 0 ]; then
   exit 0
 fi
 
-PRIMARY_SP=$(echo "$SP_CHECK" | jq -r '.sps[0].operator_address // empty' 2>/dev/null || true)
+PRIMARY_SP=$(first_in_service_sp_operator 2>/dev/null || true)
 if [ -z "$PRIMARY_SP" ]; then
   echo "SKIP: cannot resolve primary SP"
   exit 0
@@ -45,26 +45,13 @@ echo "Testing object seal progress (bucket=$BUCKET_NAME)..."
 exec_moca_cmd_signed bucket create --primarySP "$PRIMARY_SP" "$BUCKET_URL" >/dev/null
 wait_for_block 3
 
+# moca-cmd object put (without --bypassSeal) polls HeadObject internally until
+# OBJECT_STATUS_SEALED or its 1-hour timeout. A zero exit means SEALED.
 exec_moca_cmd_signed object put --contentType "application/octet-stream" "$TEST_FILE" "$OBJECT_REL" >/dev/null || {
-  echo "WARN: object put failed"
-  exit 0
+  echo "FAIL: object never reached OBJECT_STATUS_SEALED"
+  exit 1
 }
-wait_for_block 2
-
-sealed=false
-for i in $(seq 1 12); do
-  prog=$(exec_moca_cmd object get-progress "$OBJECT_REL" 2>&1 || true)
-  if echo "$prog" | grep -q "OBJECT_STATUS_SEALED"; then
-    echo "  sealed after $((i * 5))s (approx)"
-    sealed=true
-    break
-  fi
-  sleep 5
-done
-
-if [ "$sealed" != true ]; then
-  echo "  WARN: timeout waiting for OBJECT_STATUS_SEALED"
-fi
+echo "  sealed"
 
 out=$(exec_moca_cmd object head "$OBJECT_REL" || true)
 if echo "$out" | grep -q "$OBJECT_NAME"; then

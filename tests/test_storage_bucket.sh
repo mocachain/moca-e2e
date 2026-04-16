@@ -23,7 +23,7 @@ if [ "$NUM_SPS" -le 0 ]; then
   exit 0
 fi
 
-PRIMARY_SP=$(echo "$SP_CHECK" | jq -r '.sps[0].operator_address' 2>/dev/null || echo "")
+PRIMARY_SP=$(first_in_service_sp_operator 2>/dev/null || true)
 if [ -z "$PRIMARY_SP" ]; then
   echo "SKIP: cannot resolve primary SP"
   exit 0

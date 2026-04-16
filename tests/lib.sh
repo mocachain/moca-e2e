@@ -140,6 +140,36 @@ wait_for_tx() {
   sleep "$seconds"
 }
 
+# wait_for_object_sealed: poll `moca-cmd object head <path>` until status reaches
+# OBJECT_STATUS_SEALED or timeout.
+#
+# Not needed for the default `object put` flow — moca-cmd already waits for
+# SEALED internally (cmd/cmd_object.go:808, 1h timeout). This helper is for
+# callers that used --bypassSeal or need to verify an existing object's state.
+#
+# Timeout precedence: explicit 2nd arg > SEAL_TIMEOUT_SECONDS env > default 120.
+#
+# Usage: wait_for_object_sealed "$bucket/$object" [timeout_seconds]
+# Returns 0 on SEALED, 1 on timeout. Prints status on failure.
+wait_for_object_sealed() {
+  local path="${1:?object path required}"
+  local timeout="${2:-${SEAL_TIMEOUT_SECONDS:-120}}"
+  local status deadline now
+  deadline=$(( $(date +%s) + timeout ))
+  while :; do
+    status=$(exec_moca_cmd object head "$path" 2>/dev/null | grep -oE 'object_status: OBJECT_STATUS_[A-Z_]+' | head -1)
+    case "$status" in
+      *OBJECT_STATUS_SEALED*) return 0 ;;
+    esac
+    now=$(date +%s)
+    if [ "$now" -ge "$deadline" ]; then
+      echo "  wait_for_object_sealed: timeout after ${timeout}s; last status: ${status:-unknown}" >&2
+      return 1
+    fi
+    sleep 3
+  done
+}
+
 # --- Assertion helpers ---
 assert_gt() {
   local actual="$1" expected="$2" msg="$3"
@@ -179,7 +209,10 @@ MOCA_CMD_PASSWORD_FILE="${MOCA_CMD_PASSWORD_FILE:-}"
 MOCA_CMD_BIN="${MOCA_CMD_BIN:-}"
 
 resolve_moca_cmd() {
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^moca-cmd$'; then
+  # The docker moca-cmd sidecar (see PR that adds it) is keyed to local validator-0
+  # and the localnet testaccount. Never use it against remote networks — its keystore
+  # + config only match ENV=local.
+  if [ "${ENV:-local}" = "local" ] && docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^moca-cmd$'; then
     echo "docker:moca-cmd"
     return 0
   fi
@@ -194,7 +227,9 @@ resolve_moca_cmd() {
   return 1
 }
 
-# exec_moca_cmd: run moca-cmd with network flags (read-only queries, no signing)
+# exec_moca_cmd: run moca-cmd with network flags (read-only queries, no signing).
+# NOTE: moca-cmd decrypts the default key on every invocation (even reads like
+# head/ls/get-quota), so MOCA_CMD_HOME / MOCA_CMD_PASSWORD_FILE must pass through.
 exec_moca_cmd() {
   local target bin
   target="$(resolve_moca_cmd 2>/dev/null)" || return 127
@@ -210,6 +245,8 @@ exec_moca_cmd() {
     [ -n "${CHAIN_ID:-}" ] && net_args+=(--chainId "$CHAIN_ID")
     [ -n "${EVM_RPC:-}" ] && net_args+=(--evmRpcAddr "$EVM_RPC")
   fi
+  [ -n "$MOCA_CMD_HOME" ] && net_args+=(--home "$MOCA_CMD_HOME")
+  [ -n "$MOCA_CMD_PASSWORD_FILE" ] && net_args+=(-p "$MOCA_CMD_PASSWORD_FILE")
   "$bin" "${net_args[@]}" "$@" 2>/dev/null
 }
 
@@ -282,11 +319,22 @@ wait_for_block() {
 }
 
 # First IN_SERVICE SP operator from chain JSON (not moca-cmd output).
+# If SP_ENDPOINT_FILTER is set (regex), prefer SPs whose endpoint matches. Useful
+# on testnet where both legacy .org and new .dev SPs coexist and tests should
+# target a specific cluster.
 first_in_service_sp_operator() {
   local json addr
   json="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "")"
   if [ -z "$json" ]; then
     return 1
+  fi
+  if [ -n "${SP_ENDPOINT_FILTER:-}" ]; then
+    addr=$(echo "$json" | jq -r --arg f "$SP_ENDPOINT_FILTER" \
+      '.sps[] | select((.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0") and (.endpoint | test($f))) | .operator_address' 2>/dev/null | head -1)
+    if [ -n "$addr" ] && [ "$addr" != "null" ]; then
+      echo "$addr"
+      return 0
+    fi
   fi
   addr=$(echo "$json" | jq -r '.sps[] | select(.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0") | .operator_address' 2>/dev/null | head -1)
   if [ -n "$addr" ] && [ "$addr" != "null" ]; then
@@ -297,11 +345,20 @@ first_in_service_sp_operator() {
 }
 
 # SP endpoint URL from first IN_SERVICE SP (http/https).
+# If SP_ENDPOINT_FILTER is set (regex), prefer SPs whose endpoint matches.
 first_in_service_sp_endpoint() {
   local json ep
   json="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "")"
   if [ -z "$json" ]; then
     return 1
+  fi
+  if [ -n "${SP_ENDPOINT_FILTER:-}" ]; then
+    ep=$(echo "$json" | jq -r --arg f "$SP_ENDPOINT_FILTER" \
+      '.sps[] | select((.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0") and (.endpoint | test($f))) | .endpoint' 2>/dev/null | head -1)
+    if [ -n "$ep" ] && [ "$ep" != "null" ]; then
+      echo "$ep"
+      return 0
+    fi
   fi
   ep=$(echo "$json" | jq -r '.sps[] | select(.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0") | .endpoint' 2>/dev/null | head -1)
   if [ -n "$ep" ] && [ "$ep" != "null" ]; then

@@ -3,7 +3,7 @@ environment: testnet
 
 chain:
   chain_id: moca_222888-1
-  rpc: https://testnet-lcd.mocachain.org:443
-  api: https://testnet-api.mocachain.org
-  rest: https://testnet-api.mocachain.org
-  evm_rpc: https://testnet-rpc.mocachain.org
+  rpc: https://tm-rpc.testnet.mocachain.dev
+  api: https://api.testnet.mocachain.dev
+  rest: https://api.testnet.mocachain.dev
+  evm_rpc: https://rpc.testnet.mocachain.dev

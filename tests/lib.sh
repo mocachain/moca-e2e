@@ -475,3 +475,43 @@ extract_tx_hash() {
 list_sp_container_names() {
   docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^sp-[0-9]+$' | sort -V || true
 }
+
+sp_container_name_for_index() {
+  local index="${1:?sp index required}"
+  echo "sp-${index}"
+}
+
+exec_sp_cmd() {
+  local container="${1:?sp container required}"
+  shift
+  docker exec "$container" moca-sp "$@"
+}
+
+get_sp_status_by_operator() {
+  local operator="${1:?operator required}"
+  exec_mocad query sp storage-provider-by-operator-address "$operator" \
+    --node "$TM_RPC" --output json 2>/dev/null \
+    | jq -r '.storage_provider.status // .storageProvider.status // empty' 2>/dev/null || true
+}
+
+wait_for_sp_status() {
+  local operator="${1:?operator required}"
+  local expected_status="${2:?expected status required}"
+  local timeout="${3:-120}"
+  local deadline now status
+
+  deadline=$(( $(date +%s) + timeout ))
+  while :; do
+    status="$(get_sp_status_by_operator "$operator")"
+    if [ "$status" = "$expected_status" ]; then
+      return 0
+    fi
+
+    now=$(date +%s)
+    if [ "$now" -ge "$deadline" ]; then
+      echo "  wait_for_sp_status: timeout after ${timeout}s; last status: ${status:-unknown}" >&2
+      return 1
+    fi
+    sleep 3
+  done
+}

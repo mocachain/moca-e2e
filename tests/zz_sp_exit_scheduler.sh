@@ -34,12 +34,12 @@ if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${TARGET_SP}$"; the
   exit 0
 fi
 
-OPERATOR="$(echo "$SP_JSON" | jq -r ".sps[$PICK].operator_address // empty" 2>/dev/null || true)"
-STATUS="$(echo "$SP_JSON" | jq -r ".sps[$PICK].status // empty" 2>/dev/null || true)"
+OPERATOR="$(docker exec "$TARGET_SP" sh -lc "grep '^SpOperatorAddress' /root/.moca-sp/config.toml | sed -E \"s/.*'([^']+)'.*/\\1/\"" 2>/dev/null || true)"
 if [ -z "$OPERATOR" ]; then
-  echo "SKIP: cannot resolve operator for SP index ${PICK}"
+  echo "SKIP: cannot resolve operator for target SP ${TARGET_SP}"
   exit 0
 fi
+STATUS="$(get_sp_status_by_operator "$OPERATOR")"
 if [ "$STATUS" != "STATUS_IN_SERVICE" ] && [ "$STATUS" != "0" ]; then
   echo "SKIP: target SP ${TARGET_SP} is not IN_SERVICE (status=${STATUS:-unknown})"
   exit 0
@@ -90,7 +90,7 @@ if [ -n "$SP_ID" ] && [ "$SP_ID" != "null" ]; then
 fi
 
 print_test_section "send sp.exit from target SP container"
-sp_exit_out="$(exec_sp_cmd "$TARGET_SP" sp.exit --config /root/.moca-sp/config.toml --operatorAddress "$OPERATOR" 2>&1 || true)"
+sp_exit_out="$(exec_sp_cmd "$TARGET_SP" -c /root/.moca-sp/config.toml sp.exit --operatorAddress "$OPERATOR" 2>&1 || true)"
 if ! echo "$sp_exit_out" | grep -q "send sp exit txn successfully"; then
   echo "$sp_exit_out"
   echo "FAIL: moca-sp sp.exit did not return success"
@@ -106,7 +106,7 @@ fi
 echo "  OK: chain status is STATUS_GRACEFUL_EXITING"
 
 print_test_section "query sp exit plan from same SP"
-query_out="$(exec_sp_cmd "$TARGET_SP" query.sp.exit --config /root/.moca-sp/config.toml 2>&1 || true)"
+query_out="$(exec_sp_cmd "$TARGET_SP" query.sp.exit -c /root/.moca-sp/config.toml --endpoint localhost:9333 2>&1 || true)"
 echo "$query_out"
 
 if echo "$query_out" | grep -q "spExitScheduler not exit"; then

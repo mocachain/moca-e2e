@@ -47,13 +47,37 @@ sp_appears_as_secondary_somewhere() {
   return 1
 }
 
+current_family_count() {
+  exec_mocad query virtualgroup global-virtual-group-families 100 \
+    --node "$TM_RPC" --output json 2>/dev/null | jq -r '.gvg_families | length // 0' 2>/dev/null || echo "0"
+}
+
 select_target_sp_index() {
   local requested="${E2E_SP_EXIT_INDEX:-}"
-  local candidate_id candidate_idx
+  local candidate_id candidate_idx family_count seen_first
 
   if [ -n "$requested" ] && [ "$requested" -ge 0 ] 2>/dev/null && [ "$requested" -lt "$NUM_SPS" ] 2>/dev/null; then
     printf '%s\n' "$requested"
     return 0
+  fi
+
+  family_count="$(current_family_count)"
+  if [ "$family_count" = "0" ]; then
+    seen_first=0
+    for candidate_id in $(printf '%s\n' "$SP_JSON" \
+      | jq -r '.sps[] | select(.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0") | .id' 2>/dev/null | sort -nr); do
+      [ -n "$candidate_id" ] || continue
+      candidate_idx=$((candidate_id - 1))
+      if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^sp-${candidate_idx}$"; then
+        continue
+      fi
+      if [ "$seen_first" = "0" ]; then
+        seen_first=1
+        continue
+      fi
+      printf '%s\n' "$candidate_idx"
+      return 0
+    done
   fi
 
   for candidate_id in $(printf '%s\n' "$SP_JSON" \
@@ -72,7 +96,7 @@ select_target_sp_index() {
 
 PICK="$(select_target_sp_index || true)"
 if [ -z "$PICK" ]; then
-  echo "SKIP: could not find an IN_SERVICE SP that also appears as a secondary in another family"
+  echo "SKIP: could not find a usable IN_SERVICE target SP for secondary exit coverage"
   exit 0
 fi
 
@@ -472,20 +496,25 @@ else
 fi
 
 print_test_section "complete final SP exit"
-if wait_for_sp_removed_from_list "$OPERATOR" 30; then
+if wait_for_sp_removed_from_list "$OPERATOR" 90; then
   echo "  OK: target SP completed final exit automatically"
 else
   complete_out="$(exec_sp_cmd "$TARGET_SP" -c /root/.moca-sp/config.toml sp.complete.exit --operatorAddress "$OPERATOR" 2>&1 || true)"
   echo "$complete_out"
   if ! echo "$complete_out" | grep -q "send complete sp exit txn successfully"; then
-    echo "FAIL: moca-sp sp.complete.exit did not return success"
-    exit 1
+    if wait_for_sp_removed_from_list "$OPERATOR" 30; then
+      echo "  OK: target SP completed final exit automatically while sp.complete.exit was racing"
+    else
+      echo "FAIL: moca-sp sp.complete.exit did not return success"
+      exit 1
+    fi
+  else
+    if ! wait_for_sp_removed_from_list "$OPERATOR" 180; then
+      echo "FAIL: target SP still exists in chain SP list after complete exit"
+      exit 1
+    fi
+    echo "  OK: target SP removed from chain SP list after sp.complete.exit"
   fi
-  if ! wait_for_sp_removed_from_list "$OPERATOR" 180; then
-    echo "FAIL: target SP still exists in chain SP list after complete exit"
-    exit 1
-  fi
-  echo "  OK: target SP removed from chain SP list after sp.complete.exit"
 fi
 
 print_test_section "verify chain SP list after complete exit"

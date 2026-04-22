@@ -31,8 +31,16 @@ for component in $(yq '.components | keys | .[]' "$STACK_FILE"); do
 
   if [ -d "$target_dir/.git" ]; then
     echo "  Already cloned, fetching and checking out $ref"
-    git -C "$target_dir" fetch origin
-    git -C "$target_dir" checkout "$ref" 2>/dev/null || git -C "$target_dir" checkout "origin/$ref"
+    git -C "$target_dir" fetch --tags origin
+    if git -C "$target_dir" rev-parse --verify --quiet "$ref^{commit}" >/dev/null; then
+      git -C "$target_dir" checkout "$ref"
+    elif git -C "$target_dir" ls-remote --exit-code origin "$ref" >/dev/null 2>&1; then
+      git -C "$target_dir" fetch origin "$ref"
+      git -C "$target_dir" checkout "$ref" 2>/dev/null || git -C "$target_dir" checkout "origin/$ref"
+    else
+      git -C "$target_dir" fetch --depth 1 origin "$ref"
+      git -C "$target_dir" checkout FETCH_HEAD
+    fi
   else
     echo "  Cloning..."
     git clone --depth 1 --branch "$ref" "https://github.com/${repo}.git" "$target_dir" 2>/dev/null || \

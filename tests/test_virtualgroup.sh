@@ -38,9 +38,9 @@ fi
 # Query global virtual group families
 echo "  Querying global virtual group families..."
 GVG_FAMILIES=$(exec_mocad query virtualgroup global-virtual-group-families \
-  --node "$TM_RPC" --output json 2>/dev/null || echo "")
+  100 --node "$TM_RPC" --output json 2>/dev/null || echo "")
 
-NUM_FAMILIES=$(echo "$GVG_FAMILIES" | jq '.global_virtual_group_families | length // 0' 2>/dev/null || echo "0")
+NUM_FAMILIES=$(echo "$GVG_FAMILIES" | jq '.gvg_families | length // 0' 2>/dev/null || echo "0")
 echo "  GVG families: $NUM_FAMILIES"
 
 # Query GVG statistics per SP

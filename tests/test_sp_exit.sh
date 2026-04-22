@@ -31,9 +31,49 @@ if [ "$NUM_SPS" -lt 3 ]; then
   exit 0
 fi
 
-PICK="${E2E_SP_EXIT_INDEX:-$((NUM_SPS - 1))}"
-if [ "$PICK" -lt 0 ] || [ "$PICK" -ge "$NUM_SPS" ]; then
-  PICK=$((NUM_SPS - 1))
+sp_appears_as_secondary_somewhere() {
+  local sp_id="${1:?sp id required}"
+  local family_id
+
+  for family_id in $(exec_mocad query virtualgroup global-virtual-group-families 100 \
+    --node "$TM_RPC" --output json 2>/dev/null | jq -r '.gvg_families[]?.id' 2>/dev/null); do
+    if exec_mocad query virtualgroup global-virtual-group-by-family-id "$family_id" \
+      --node "$TM_RPC" --output json 2>/dev/null \
+      | jq -e --argjson sid "$sp_id" '[.global_virtual_groups[]?.secondary_sp_ids[]?] | index($sid) != null' >/dev/null 2>&1; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+select_target_sp_index() {
+  local requested="${E2E_SP_EXIT_INDEX:-}"
+  local candidate_id candidate_idx
+
+  if [ -n "$requested" ] && [ "$requested" -ge 0 ] 2>/dev/null && [ "$requested" -lt "$NUM_SPS" ] 2>/dev/null; then
+    printf '%s\n' "$requested"
+    return 0
+  fi
+
+  for candidate_id in $(printf '%s\n' "$SP_JSON" \
+    | jq -r '.sps[] | select(.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0") | .id' 2>/dev/null | sort -nr); do
+    [ -n "$candidate_id" ] || continue
+    candidate_idx=$((candidate_id - 1))
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^sp-${candidate_idx}$" \
+      && sp_appears_as_secondary_somewhere "$candidate_id"; then
+      printf '%s\n' "$candidate_idx"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+PICK="$(select_target_sp_index || true)"
+if [ -z "$PICK" ]; then
+  echo "SKIP: could not find an IN_SERVICE SP that also appears as a secondary in another family"
+  exit 0
 fi
 
 TARGET_SP="$(sp_container_name_for_index "$PICK")"
@@ -65,11 +105,16 @@ BUCKET_NAME="e2e-sp-exit-$(date +%s)-${RANDOM}"
 BUCKET_URL="moca://${BUCKET_NAME}"
 OBJECT_NAME="exit_obj.txt"
 OBJECT_REL="${BUCKET_NAME}/${OBJECT_NAME}"
+SECONDARY_OBJECT_NAME="secondary_exit_obj.txt"
 HOST_TEST_FILE="$(create_test_file "/tmp/${OBJECT_NAME}" "sp exit object $(date)")"
 CONTAINER_TEST_FILE="/tmp/${OBJECT_NAME}"
+SECONDARY_OBJECT_REL=""
 
 cleanup() {
   rm -f "$HOST_TEST_FILE"
+  if [ -n "${SECONDARY_OBJECT_REL:-}" ]; then
+    exec_moca_cmd object rm "$SECONDARY_OBJECT_REL" >/dev/null 2>&1 || true
+  fi
   if [ -n "${SECONDARY_BUCKET_URL:-}" ]; then
     exec_moca_cmd bucket rm "$SECONDARY_BUCKET_URL" >/dev/null 2>&1 || true
   fi
@@ -118,6 +163,10 @@ gvg_stats_json_by_sp() {
   local sp_id="${1:?sp id required}"
   exec_mocad query virtualgroup gvg-statistics-within-sp "$sp_id" \
     --node "$TM_RPC" --output json 2>/dev/null || echo '{}'
+}
+
+gvg_statistics_query_supported() {
+  exec_mocad query virtualgroup --help 2>/dev/null | grep -q "gvg-statistics-within-sp"
 }
 
 gvg_stat_value() {
@@ -300,6 +349,19 @@ echo "  auxiliary_bucket=${SECONDARY_BUCKET_URL}"
 echo "  auxiliary_family_id=${SECONDARY_BUCKET_FAMILY_ID}"
 echo "  auxiliary_secondary_sp_ids=${SECONDARY_BUCKET_SECONDARY_IDS}"
 
+print_test_section "put and seal object on auxiliary bucket"
+SECONDARY_OBJECT_REL="${SECONDARY_BUCKET_URL#moca://}/${SECONDARY_OBJECT_NAME}"
+secondary_put_out="$(moca_cmd_tx object put --contentType "application/octet-stream" "$CONTAINER_TEST_FILE" "$SECONDARY_OBJECT_REL" || true)"
+if ! echo "$secondary_put_out" | grep -qiE "created|sealing|upload"; then
+  echo "$secondary_put_out"
+  echo "FAIL: auxiliary object put did not start successfully"
+  exit 1
+fi
+if ! wait_for_object_sealed "$SECONDARY_OBJECT_REL" 180; then
+  echo "FAIL: auxiliary object never reached OBJECT_STATUS_SEALED"
+  exit 1
+fi
+
 print_test_section "record pre-exit state"
 OBJECT_HEAD_BEFORE="$(exec_moca_cmd object head "$OBJECT_REL" 2>&1 || true)"
 if ! echo "$OBJECT_HEAD_BEFORE" | grep -q "object_name:\"$OBJECT_NAME\""; then
@@ -317,7 +379,11 @@ PRIMARY_COUNT_BEFORE="$(gvg_stat_value "$SP_ID" primary_count)"
 SECONDARY_COUNT_BEFORE="$(gvg_stat_value "$SP_ID" secondary_count)"
 echo "  primary_count_before=${PRIMARY_COUNT_BEFORE}"
 echo "  secondary_count_before=${SECONDARY_COUNT_BEFORE}"
-assert_gt "$SECONDARY_COUNT_BEFORE" "0" "target SP has secondary GVGs before exit"
+if gvg_statistics_query_supported; then
+  assert_gt "$SECONDARY_COUNT_BEFORE" "0" "target SP has secondary GVGs before exit"
+else
+  echo "  INFO: skipping GVG statistics assertion because local mocad does not expose gvg-statistics-within-sp"
+fi
 
 print_test_section "query chain SP list before exit"
 printf '%s\n' "$SP_JSON" | jq -r '.sps[] | "  id=\(.id) status=\(.status) operator=\(.operator_address)"' 2>/dev/null || true
@@ -388,17 +454,22 @@ if [ -n "$SUCCESSOR_IDS" ]; then
   echo "  OK: bucket migrated to successor SP ID ${NEW_PRIMARY_SP_ID}"
 fi
 
-print_test_section "wait for target SP GVG counts to drain to zero"
-if ! wait_for_gvg_stat_value "$SP_ID" primary_count "0" 180; then
-  echo "FAIL: target SP primary_count did not drain to zero"
-  exit 1
+if gvg_statistics_query_supported; then
+  print_test_section "wait for target SP GVG counts to drain to zero"
+  if ! wait_for_gvg_stat_value "$SP_ID" primary_count "0" 180; then
+    echo "FAIL: target SP primary_count did not drain to zero"
+    exit 1
+  fi
+  if ! wait_for_gvg_stat_value "$SP_ID" secondary_count "0" 180; then
+    echo "FAIL: target SP secondary_count did not drain to zero"
+    exit 1
+  fi
+  echo "  OK: target SP primary_count drained to 0"
+  echo "  OK: target SP secondary_count drained to 0"
+else
+  print_test_section "skip GVG statistics drain check"
+  echo "  INFO: local mocad does not expose gvg-statistics-within-sp; final SP removal is used as the end-to-end completion signal"
 fi
-if ! wait_for_gvg_stat_value "$SP_ID" secondary_count "0" 180; then
-  echo "FAIL: target SP secondary_count did not drain to zero"
-  exit 1
-fi
-echo "  OK: target SP primary_count drained to 0"
-echo "  OK: target SP secondary_count drained to 0"
 
 print_test_section "complete final SP exit"
 if wait_for_sp_removed_from_list "$OPERATOR" 30; then

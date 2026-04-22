@@ -128,7 +128,7 @@ Source repo merges to main
 | `test_sp_diagnose` | SP — containers, on-chain list, governance proposals, `moca-cmd sp ls`, gateway ports |
 | `test_sp_config` | SP — `config.toml` checks (GRPC, HTTP, metrics, BlockSyncer, GVG fees, Server modules) |
 | `test_sp_join` | SP — per-operator queries, container health, `moca-cmd sp ls`, `head`, `get-price` |
-| `test_sp_exit` | SP — bucket/object on target SP, GVG query; chain exit tx via EVM precompile (not in `mocad` CLI) |
+| `test_sp_exit` | SP — target SP acts as both primary and secondary, waits for GVG counts to drain, then verifies final SP removal from chain |
 | `test_sp_delete` | SP — governance delete pre-checks only (no destructive tx by default) |
 
 `tests/lib.sh` exposes `resolve_moca_cmd` / `exec_moca_cmd` for optional `moca-cmd` in Docker (`moca-cmd` container) or on `PATH`.

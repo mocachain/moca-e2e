@@ -70,6 +70,9 @@ CONTAINER_TEST_FILE="/tmp/${OBJECT_NAME}"
 
 cleanup() {
   rm -f "$HOST_TEST_FILE"
+  if [ -n "${SECONDARY_BUCKET_URL:-}" ]; then
+    exec_moca_cmd bucket rm "$SECONDARY_BUCKET_URL" >/dev/null 2>&1 || true
+  fi
   exec_moca_cmd object rm "$OBJECT_REL" >/dev/null 2>&1 || true
   exec_moca_cmd bucket rm "$BUCKET_URL" >/dev/null 2>&1 || true
 }
@@ -102,6 +105,127 @@ wait_for_gvg_primary_sp_change() {
     fi
     sleep 3
   done
+}
+
+secondary_sp_ids_by_family() {
+  local family_id="${1:?family id required}"
+  exec_mocad query virtualgroup global-virtual-group-by-family-id "$family_id" \
+    --node "$TM_RPC" --output json 2>/dev/null \
+    | jq -c '[.global_virtual_groups[]?.secondary_sp_ids[]?] | unique' 2>/dev/null || echo "[]"
+}
+
+gvg_stats_json_by_sp() {
+  local sp_id="${1:?sp id required}"
+  exec_mocad query virtualgroup gvg-statistics-within-sp "$sp_id" \
+    --node "$TM_RPC" --output json 2>/dev/null || echo '{}'
+}
+
+gvg_stat_value() {
+  local sp_id="${1:?sp id required}"
+  local field="${2:?field required}"
+  local json
+
+  json="$(gvg_stats_json_by_sp "$sp_id")"
+  case "$field" in
+    primary_count)
+      printf '%s\n' "$json" | jq -r '.gvg_statistics.primary_count // .gvgStatistics.primaryCount // 0' 2>/dev/null || echo "0"
+      ;;
+    secondary_count)
+      printf '%s\n' "$json" | jq -r '.gvg_statistics.secondary_count // .gvgStatistics.secondaryCount // 0' 2>/dev/null || echo "0"
+      ;;
+    *)
+      echo "0"
+      ;;
+  esac
+}
+
+wait_for_gvg_stat_value() {
+  local sp_id="${1:?sp id required}"
+  local field="${2:?field required}"
+  local expected="${3:?expected value required}"
+  local timeout="${4:-180}"
+  local deadline now current
+
+  deadline=$(( $(date +%s) + timeout ))
+  while :; do
+    current="$(gvg_stat_value "$sp_id" "$field")"
+    if [ "$current" = "$expected" ]; then
+      return 0
+    fi
+    now=$(date +%s)
+    if [ "$now" -ge "$deadline" ]; then
+      echo "  wait_for_gvg_stat_value: timeout after ${timeout}s; ${field}=${current:-unknown}, expected=${expected}" >&2
+      return 1
+    fi
+    sleep 3
+  done
+}
+
+wait_for_sp_removed_from_list() {
+  local operator="${1:?operator required}"
+  local timeout="${2:-180}"
+  local deadline now sp_json
+
+  deadline=$(( $(date +%s) + timeout ))
+  while :; do
+    sp_json="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo '{}')"
+    if ! printf '%s\n' "$sp_json" | jq -e --arg op "$operator" '.sps[] | select(.operator_address == $op)' >/dev/null 2>&1; then
+      return 0
+    fi
+    now=$(date +%s)
+    if [ "$now" -ge "$deadline" ]; then
+      echo "  wait_for_sp_removed_from_list: timeout after ${timeout}s; operator still present: ${operator}" >&2
+      return 1
+    fi
+    sleep 3
+  done
+}
+
+create_bucket_with_target_as_secondary() {
+  local target_sp_id="${1:?target sp id required}"
+  local candidate_operators candidate bucket_name bucket_url bucket_out bucket_head family_id secondary_ids attempt
+
+  candidate_operators="$(printf '%s\n' "$SP_JSON" | jq -r --arg sid "$target_sp_id" \
+    '.sps[] | select((.id|tostring) != $sid and (.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0")) | .operator_address' 2>/dev/null || true)"
+
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    for attempt in 1 2 3; do
+      bucket_name="e2e-sp-exit-secondary-${target_sp_id}-$(date +%s)-${RANDOM}"
+      bucket_url="moca://${bucket_name}"
+      bucket_out="$(moca_cmd_tx bucket create --primarySP "$candidate" "$bucket_url" || true)"
+      if ! echo "$bucket_out" | grep -q "$bucket_name"; then
+        echo "$bucket_out"
+        echo "FAIL: auxiliary bucket create did not succeed on candidate primary SP ${candidate}"
+        return 1
+      fi
+
+      bucket_head="$(exec_moca_cmd bucket head "$bucket_url" 2>&1 || true)"
+      family_id="$(printf '%s\n' "$bucket_head" | awk -F': ' '/^virtual_group_family_id:/ {print $2; exit}')"
+      if [ -z "$family_id" ]; then
+        echo "$bucket_head"
+        echo "FAIL: could not resolve auxiliary bucket family ID"
+        return 1
+      fi
+
+      secondary_ids="$(secondary_sp_ids_by_family "$family_id")"
+      echo "  auxiliary bucket attempt=${attempt} candidate_primary=${candidate} family_id=${family_id} secondary_sp_ids=${secondary_ids}"
+      if printf '%s\n' "$secondary_ids" | jq -e --argjson sid "$target_sp_id" 'index($sid) != null' >/dev/null 2>&1; then
+        SECONDARY_BUCKET_URL="$bucket_url"
+        SECONDARY_BUCKET_FAMILY_ID="$family_id"
+        SECONDARY_BUCKET_PRIMARY_OPERATOR="$candidate"
+        SECONDARY_BUCKET_SECONDARY_IDS="$secondary_ids"
+        return 0
+      fi
+
+      exec_moca_cmd bucket rm "$bucket_url" >/dev/null 2>&1 || true
+    done
+  done <<EOF
+$candidate_operators
+EOF
+
+  echo "FAIL: could not create an auxiliary bucket whose GVG uses target SP ${target_sp_id} as secondary"
+  return 1
 }
 
 wait_for_object_visible() {
@@ -167,6 +291,15 @@ if ! wait_for_object_sealed "$OBJECT_REL" 180; then
   exit 1
 fi
 
+print_test_section "create auxiliary bucket where target SP is a secondary"
+if ! create_bucket_with_target_as_secondary "$SP_ID"; then
+  exit 1
+fi
+echo "  OK: auxiliary bucket uses target SP ${SP_ID} as secondary"
+echo "  auxiliary_bucket=${SECONDARY_BUCKET_URL}"
+echo "  auxiliary_family_id=${SECONDARY_BUCKET_FAMILY_ID}"
+echo "  auxiliary_secondary_sp_ids=${SECONDARY_BUCKET_SECONDARY_IDS}"
+
 print_test_section "record pre-exit state"
 OBJECT_HEAD_BEFORE="$(exec_moca_cmd object head "$OBJECT_REL" 2>&1 || true)"
 if ! echo "$OBJECT_HEAD_BEFORE" | grep -q "object_name:\"$OBJECT_NAME\""; then
@@ -180,10 +313,11 @@ echo "  gvg_family_id=${BUCKET_FAMILY_ID}"
 echo "  primary_sp_id_before=${BEFORE_PRIMARY_SP_ID}"
 echo "  secondary_sp_ids_before=${SECONDARY_SP_IDS_BEFORE:-unknown}"
 
-if [ -n "$SP_ID" ] && [ "$SP_ID" != "null" ]; then
-  exec_mocad query virtualgroup gvg-statistics-within-sp "$SP_ID" \
-    --node "$TM_RPC" --output json 2>/dev/null | jq -c '.gvg_statistics // .' 2>/dev/null || true
-fi
+PRIMARY_COUNT_BEFORE="$(gvg_stat_value "$SP_ID" primary_count)"
+SECONDARY_COUNT_BEFORE="$(gvg_stat_value "$SP_ID" secondary_count)"
+echo "  primary_count_before=${PRIMARY_COUNT_BEFORE}"
+echo "  secondary_count_before=${SECONDARY_COUNT_BEFORE}"
+assert_gt "$SECONDARY_COUNT_BEFORE" "0" "target SP has secondary GVGs before exit"
 
 print_test_section "query chain SP list before exit"
 printf '%s\n' "$SP_JSON" | jq -r '.sps[] | "  id=\(.id) status=\(.status) operator=\(.operator_address)"' 2>/dev/null || true
@@ -254,12 +388,43 @@ if [ -n "$SUCCESSOR_IDS" ]; then
   echo "  OK: bucket migrated to successor SP ID ${NEW_PRIMARY_SP_ID}"
 fi
 
-print_test_section "verify chain SP list after exit"
+print_test_section "wait for target SP GVG counts to drain to zero"
+if ! wait_for_gvg_stat_value "$SP_ID" primary_count "0" 180; then
+  echo "FAIL: target SP primary_count did not drain to zero"
+  exit 1
+fi
+if ! wait_for_gvg_stat_value "$SP_ID" secondary_count "0" 180; then
+  echo "FAIL: target SP secondary_count did not drain to zero"
+  exit 1
+fi
+echo "  OK: target SP primary_count drained to 0"
+echo "  OK: target SP secondary_count drained to 0"
+
+print_test_section "complete final SP exit"
+if wait_for_sp_removed_from_list "$OPERATOR" 30; then
+  echo "  OK: target SP completed final exit automatically"
+else
+  complete_out="$(exec_sp_cmd "$TARGET_SP" -c /root/.moca-sp/config.toml sp.complete.exit --operatorAddress "$OPERATOR" 2>&1 || true)"
+  echo "$complete_out"
+  if ! echo "$complete_out" | grep -q "send complete sp exit txn successfully"; then
+    echo "FAIL: moca-sp sp.complete.exit did not return success"
+    exit 1
+  fi
+  if ! wait_for_sp_removed_from_list "$OPERATOR" 180; then
+    echo "FAIL: target SP still exists in chain SP list after complete exit"
+    exit 1
+  fi
+  echo "  OK: target SP removed from chain SP list after sp.complete.exit"
+fi
+
+print_test_section "verify chain SP list after complete exit"
 SP_JSON_AFTER="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo '{}')"
 printf '%s\n' "$SP_JSON_AFTER" | jq -r '.sps[] | "  id=\(.id) status=\(.status) operator=\(.operator_address)"' 2>/dev/null || true
-
-STATUS_AFTER="$(printf '%s\n' "$SP_JSON_AFTER" | jq -r --arg op "$OPERATOR" '.sps[] | select(.operator_address == $op) | .status' 2>/dev/null | head -1)"
-assert_eq "$STATUS_AFTER" "STATUS_GRACEFUL_EXITING" "target SP status in chain SP list"
+if printf '%s\n' "$SP_JSON_AFTER" | jq -e --arg op "$OPERATOR" '.sps[] | select(.operator_address == $op)' >/dev/null 2>&1; then
+  echo "FAIL: target SP is still present in chain SP list after complete exit"
+  exit 1
+fi
+echo "  OK: target SP is no longer present in the chain SP list"
 
 if [ -n "$SUCCESSOR_IDS" ]; then
   while IFS= read -r successor_id; do
@@ -276,4 +441,4 @@ fi
 
 trap - EXIT
 cleanup
-echo "PASS: complete SP graceful exit workflow succeeded"
+echo "PASS: complete SP exit workflow succeeded"

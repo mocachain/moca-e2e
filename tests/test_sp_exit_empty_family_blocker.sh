@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E2E: reproduce the empty-family blocker during complete SP exit.
+# E2E: reproduce the empty-GVG family blocker during complete SP exit.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

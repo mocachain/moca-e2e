@@ -117,7 +117,7 @@ Source repo merges to main
 | `test_cross_module` | Bank, Staking, Distribution — sequential txs across modules |
 | `test_storage_bucket` | Storage — bucket create/query/delete via `mocad`; if `moca-cmd` is available, full bucket CLI flow |
 | `test_storage_object` | Storage — full object CLI flow (`put`, `head`, `setTag`, `ls`, cleanup) when `moca-cmd` is available; else bucket-only `mocad` smoke |
-| `test_storage_object_failover` | Storage — graceful-exit the local primary SP, wait for successor takeover, and verify object reads remain available |
+| `test_storage_object_failover` | Storage — pause the local primary SP, manually run successor `swapIn/recover-vgf/completeSwapIn`, and verify object reads remain available |
 | `test_storage_object_seal` | Storage — poll `object get-progress` until sealed, then head/list |
 | `test_storage_group` | Storage — group lifecycle via `mocad`; if `moca-cmd` is available, full group CLI flow |
 | `test_storage_policy` | Storage — bucket/object/group policy CRUD via `moca-cmd` GRNs when available; else `mocad put-policy` |

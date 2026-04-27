@@ -29,6 +29,12 @@ if [ "$NUM_SPS" -lt 3 ]; then
   exit 0
 fi
 
+IN_SERVICE_SP_COUNT="$(printf '%s\n' "$SP_CHECK" | jq -r '[.sps[] | select(.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0")] | length' 2>/dev/null || echo "0")"
+if [ "${IN_SERVICE_SP_COUNT:-0}" -lt 7 ]; then
+  echo "SKIP: manual object failover test needs 7 IN_SERVICE SPs to create a fresh family on local stack (have ${IN_SERVICE_SP_COUNT:-0})"
+  exit 0
+fi
+
 PRIMARY_SP_CONTAINER="sp-0"
 PRIMARY_SP_EXPECTED_ENDPOINT="http://${PRIMARY_SP_CONTAINER}:9033"
 PRIMARY_SP="$(printf '%s\n' "$SP_CHECK" | jq -r --arg primary_container "$PRIMARY_SP_CONTAINER" --arg expected_endpoint "$PRIMARY_SP_EXPECTED_ENDPOINT" '.sps[] | select((.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0") and ((.description.moniker // "") == $primary_container or (.endpoint // "") == $expected_endpoint)) | .operator_address' 2>/dev/null | head -1)"

@@ -35,6 +35,11 @@ if [ -z "$PRIMARY_SP" ] || [ "$PRIMARY_SP" = "null" ]; then
   echo "SKIP: cannot resolve operator for local primary SP container ${PRIMARY_SP_CONTAINER}"
   exit 0
 fi
+PRIMARY_SP_ENDPOINT="$(printf '%s\n' "$SP_CHECK" | jq -r '.sps[] | select((.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0") and (.endpoint | tostring | test(":9033$"))) | .endpoint' 2>/dev/null | head -1)"
+if [ -z "$PRIMARY_SP_ENDPOINT" ] || [ "$PRIMARY_SP_ENDPOINT" = "null" ]; then
+  echo "SKIP: cannot resolve endpoint for local primary SP container ${PRIMARY_SP_CONTAINER}"
+  exit 0
+fi
 
 sha256_file() {
   local path="${1:?path required}"
@@ -80,6 +85,7 @@ OBJECT_NAME="failover-object.txt"
 OBJECT_URL="${BUCKET_URL}/${OBJECT_NAME}"
 SOURCE_FILE="$(create_test_file "/tmp/${BUCKET_NAME}-${OBJECT_NAME}" "storage failover $(date)")"
 DOWNLOAD_FILE="/tmp/${BUCKET_NAME}-${OBJECT_NAME}.downloaded"
+PRIMARY_ONLY_DOWNLOAD_FILE="/tmp/${BUCKET_NAME}-${OBJECT_NAME}.primary-only"
 
 cleanup() {
   if [ "$PRIMARY_PAUSED" = "1" ]; then
@@ -88,6 +94,7 @@ cleanup() {
   fi
   rm -f "$SOURCE_FILE" >/dev/null 2>&1 || true
   remove_file_docker_aware "$DOWNLOAD_FILE"
+  remove_file_docker_aware "$PRIMARY_ONLY_DOWNLOAD_FILE"
   exec_moca_cmd_signed bucket rm "$BUCKET_URL" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -115,7 +122,17 @@ PRIMARY_PAUSED=1
 sleep 3
 print_success "primary container paused"
 
-print_test_section "Step 4: get object through secondary failover"
+print_test_section "Step 4: verify primary endpoint is unavailable"
+remove_file_docker_aware "$PRIMARY_ONLY_DOWNLOAD_FILE"
+if primary_get_out="$(exec_moca_cmd_signed object get --spEndpoint "$PRIMARY_SP_ENDPOINT" "$OBJECT_URL" "$PRIMARY_ONLY_DOWNLOAD_FILE")"; then
+  echo "$primary_get_out"
+  echo "FAIL: object get unexpectedly succeeded when forced to use paused primary endpoint ${PRIMARY_SP_ENDPOINT}"
+  exit 1
+fi
+remove_file_docker_aware "$PRIMARY_ONLY_DOWNLOAD_FILE"
+print_success "forced primary endpoint download failed as expected"
+
+print_test_section "Step 5: get object through secondary failover"
 get_out="$(exec_moca_cmd_signed object get "$OBJECT_URL" "$DOWNLOAD_FILE" || true)"
 if [ ! -f "$DOWNLOAD_FILE" ]; then
   echo "$get_out"
@@ -127,7 +144,7 @@ SOURCE_SHA="$(sha256_file "$SOURCE_FILE")"
 DOWNLOAD_SHA="$(sha256_file_docker_aware "$DOWNLOAD_FILE" || true)"
 assert_eq "$DOWNLOAD_SHA" "$SOURCE_SHA" "downloaded object matches original sha256"
 
-print_test_section "Step 5: unpause primary SP container"
+print_test_section "Step 6: unpause primary SP container"
 docker unpause "$PRIMARY_SP_CONTAINER" >/dev/null
 PRIMARY_PAUSED=0
 print_success "primary container resumed"

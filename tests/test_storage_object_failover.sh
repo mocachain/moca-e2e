@@ -19,6 +19,7 @@ if ! resolve_moca_cmd >/dev/null 2>&1; then
   echo "SKIP: moca-cmd required for object get failover"
   exit 0
 fi
+MOCA_CMD_TARGET="$(resolve_moca_cmd 2>/dev/null || true)"
 
 SP_CHECK="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "")"
 NUM_SPS="$(echo "$SP_CHECK" | jq -r '.sps | length // 0' 2>/dev/null || echo "0")"
@@ -44,6 +45,34 @@ sha256_file() {
   shasum -a 256 "$path" | awk '{print $1}'
 }
 
+sha256_file_docker_aware() {
+  local path="${1:?path required}"
+  if [ -r "$path" ]; then
+    sha256_file "$path"
+    return 0
+  fi
+  if [[ "$MOCA_CMD_TARGET" == docker:* ]]; then
+    docker exec "${MOCA_CMD_TARGET#docker:}" sh -lc '
+      if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk "{print \$1}"
+      else
+        shasum -a 256 "$1" | awk "{print \$1}"
+      fi
+    ' sh "$path" 2>/dev/null
+    return $?
+  fi
+  return 1
+}
+
+remove_file_docker_aware() {
+  local path="${1:?path required}"
+  rm -f "$path" >/dev/null 2>&1 || true
+  if [ -e "$path" ] && [[ "$MOCA_CMD_TARGET" == docker:* ]]; then
+    docker exec "${MOCA_CMD_TARGET#docker:}" rm -f "$path" >/dev/null 2>&1 || true
+    rm -f "$path" >/dev/null 2>&1 || true
+  fi
+}
+
 PRIMARY_PAUSED=0
 BUCKET_NAME="$(generate_bucket_name "e2e-obj-failover")"
 BUCKET_URL="moca://${BUCKET_NAME}"
@@ -57,7 +86,8 @@ cleanup() {
     docker unpause "$PRIMARY_SP_CONTAINER" >/dev/null 2>&1 || true
     PRIMARY_PAUSED=0
   fi
-  rm -f "$SOURCE_FILE" "$DOWNLOAD_FILE"
+  rm -f "$SOURCE_FILE" >/dev/null 2>&1 || true
+  remove_file_docker_aware "$DOWNLOAD_FILE"
   exec_moca_cmd_signed bucket rm "$BUCKET_URL" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -94,7 +124,7 @@ if [ ! -f "$DOWNLOAD_FILE" ]; then
 fi
 
 SOURCE_SHA="$(sha256_file "$SOURCE_FILE")"
-DOWNLOAD_SHA="$(sha256_file "$DOWNLOAD_FILE")"
+DOWNLOAD_SHA="$(sha256_file_docker_aware "$DOWNLOAD_FILE" || true)"
 assert_eq "$DOWNLOAD_SHA" "$SOURCE_SHA" "downloaded object matches original sha256"
 
 print_test_section "Step 5: unpause primary SP container"

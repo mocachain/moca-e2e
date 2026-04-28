@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E2E: manual object failover after the primary SP becomes unavailable.
+# E2E: manual object failover after the primary SP is forced to exit and its endpoint becomes unavailable.
 set -euo pipefail
 
 ENV="${1:-local}"
@@ -95,6 +95,230 @@ remove_file_docker_aware() {
   if [ -e "$path" ] && [[ "$MOCA_CMD_TARGET" == docker:* ]]; then
     docker exec "${MOCA_CMD_TARGET#docker:}" rm -f "$path" >/dev/null 2>&1 || true
     rm -f "$path" >/dev/null 2>&1 || true
+  fi
+}
+
+timed_object_get() {
+  local timeout_seconds="${1:?timeout seconds required}"
+  shift
+
+  if [[ "$MOCA_CMD_TARGET" == docker:* ]]; then
+    local container="${MOCA_CMD_TARGET#docker:}"
+    docker exec "$container" sh -lc '
+      timeout="$1"
+      shift
+      exec timeout "$timeout" moca-cmd -p /root/.moca-cmd/password.txt "$@"
+    ' sh "$timeout_seconds" "$@" 2>/dev/null
+    return $?
+  fi
+
+  exec_moca_cmd_signed "$@"
+}
+
+exec_validator_mocad() {
+  local validator_index="${1:?validator index required}"
+  shift
+  docker exec "validator-${validator_index}" mocad "$@" --home /root/.mocad 2>/dev/null
+}
+
+current_proposal_count() {
+  exec_mocad query gov proposals --node "$TM_RPC" --output json 2>/dev/null \
+    | jq -r '.proposals | length // 0' 2>/dev/null || echo "0"
+}
+
+latest_proposal_id() {
+  exec_mocad query gov proposals --node "$TM_RPC" --output json 2>/dev/null \
+    | jq -r '.proposals[-1].id // .proposals[-1].proposal_id // empty' 2>/dev/null || true
+}
+
+gov_module_authority() {
+  local authority
+
+  authority="$(exec_mocad query auth module-account gov --node "$TM_RPC" --output json 2>/dev/null \
+    | jq -r '.account.base_account.address // .account.value.address // empty' 2>/dev/null || true)"
+  if [ -n "$authority" ]; then
+    printf '%s\n' "$authority"
+    return 0
+  fi
+
+  authority="$(exec_mocad query auth module-accounts --node "$TM_RPC" --output json 2>/dev/null \
+    | jq -r '.accounts[]? | select(.name == "gov") | .base_account.address // .value.address // empty' 2>/dev/null || true)"
+  if [ -n "$authority" ]; then
+    printf '%s\n' "$authority"
+    return 0
+  fi
+
+  return 1
+}
+
+gov_min_deposit() {
+  local gov_params amount denom
+
+  gov_params="$(exec_mocad query gov params --node "$TM_RPC" --output json 2>/dev/null || echo '{}')"
+  amount="$(printf '%s\n' "$gov_params" | jq -r '.params.min_deposit[0].amount // .deposit_params.min_deposit[0].amount // empty' 2>/dev/null || true)"
+  denom="$(printf '%s\n' "$gov_params" | jq -r '.params.min_deposit[0].denom // .deposit_params.min_deposit[0].denom // empty' 2>/dev/null || true)"
+  if [ -z "$amount" ] || [ -z "$denom" ]; then
+    return 1
+  fi
+
+  printf '%s%s\n' "$amount" "$denom"
+}
+
+wait_for_proposal_status() {
+  local proposal_id="${1:?proposal id required}"
+  local expected_status="${2:?expected status required}"
+  local timeout="${3:-60}"
+  local deadline now current
+
+  deadline=$(( $(date +%s) + timeout ))
+  while :; do
+    current="$(exec_mocad query gov proposal "$proposal_id" --node "$TM_RPC" --output json 2>/dev/null \
+      | jq -r '.proposal.status // empty' 2>/dev/null || true)"
+    if [ "$current" = "$expected_status" ]; then
+      return 0
+    fi
+    now=$(date +%s)
+    if [ "$now" -ge "$deadline" ]; then
+      echo "  wait_for_proposal_status: timeout after ${timeout}s; proposal ${proposal_id} status=${current:-unknown}" >&2
+      return 1
+    fi
+    sleep 2
+  done
+}
+
+submit_forced_exit_proposal() {
+  local target_operator="${1:?target operator required}"
+  local gov_authority deposit before_count after_count proposal_id submit_out tmpfile validator_count validator_name vote_out
+  local proposal_json=""
+
+  gov_authority="$(gov_module_authority || true)"
+  if [ -z "$gov_authority" ]; then
+    echo "FAIL: could not determine gov module authority"
+    exit 1
+  fi
+
+  deposit="$(gov_min_deposit || true)"
+  if [ -z "$deposit" ]; then
+    echo "FAIL: could not determine governance min deposit"
+    exit 1
+  fi
+
+  before_count="$(current_proposal_count)"
+  tmpfile="/tmp/forced-exit-proposal-${PRIMARY_SP_CONTAINER}.json"
+  proposal_json=$(cat <<EOF
+{
+  "messages": [
+    {
+      "@type": "/moca.virtualgroup.MsgStorageProviderForcedExit",
+      "authority": "${gov_authority}",
+      "storageProvider": "${target_operator}"
+    }
+  ],
+  "deposit": "${deposit}",
+  "title": "E2E forced exit for ${PRIMARY_SP_CONTAINER}",
+  "summary": "Force ${PRIMARY_SP_CONTAINER} to exit before manual object failover"
+}
+EOF
+)
+
+  printf '%s\n' "$proposal_json" | docker exec -i validator-0 sh -lc "cat > ${tmpfile}"
+  submit_out="$(exec_validator_mocad 0 tx gov submit-proposal "${tmpfile}" \
+    --from validator0 \
+    --keyring-backend test \
+    --chain-id "$CHAIN_ID" \
+    --node tcp://localhost:26657 \
+    --fees "$FEES" \
+    -y 2>&1 || true)"
+  echo "$submit_out"
+  sleep 5
+
+  after_count="$(current_proposal_count)"
+  if [ "$after_count" -le "$before_count" ] 2>/dev/null; then
+    echo "FAIL: forced-exit proposal was not created"
+    exit 1
+  fi
+
+  proposal_id="$(latest_proposal_id)"
+  if [ -z "$proposal_id" ]; then
+    echo "FAIL: could not resolve forced-exit proposal id"
+    exit 1
+  fi
+  print_success "forced-exit proposal created (id=${proposal_id})"
+
+  validator_count="$(docker ps --format '{{.Names}}' 2>/dev/null | grep -Ec '^validator-[0-9]+$')"
+  if [ -z "$validator_count" ] || [ "$validator_count" -eq 0 ] 2>/dev/null; then
+    echo "FAIL: could not find validator containers to vote on proposal ${proposal_id}"
+    exit 1
+  fi
+
+  for validator_name in $(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^validator-[0-9]+$' | sort -V); do
+    vote_out="$(docker exec "$validator_name" mocad tx gov vote "$proposal_id" yes \
+      --from "validator${validator_name#validator-}" \
+      --keyring-backend test \
+      --chain-id "$CHAIN_ID" \
+      --node tcp://localhost:26657 \
+      --fees "$FEES" \
+      --home /root/.mocad \
+      -y 2>&1 || true)"
+    echo "$vote_out"
+  done
+
+  if ! wait_for_proposal_status "$proposal_id" "PROPOSAL_STATUS_PASSED" 60; then
+    echo "FAIL: forced-exit proposal ${proposal_id} did not pass"
+    exit 1
+  fi
+  print_success "forced-exit proposal passed"
+}
+
+extract_evm_tx_hash_from_output() {
+  printf '%s\n' "${1:-}" | grep -oE '0x[0-9a-fA-F]{64}' | head -1
+}
+
+wait_for_evm_receipt_status() {
+  local tx_hash="${1:?tx hash required}"
+  local timeout="${2:-30}"
+  local deadline now receipt status
+
+  deadline=$(( $(date +%s) + timeout ))
+  while :; do
+    receipt="$(_evm_rpc eth_getTransactionReceipt "[\"$tx_hash\"]")"
+    if [ -n "$receipt" ] && [ "$receipt" != "null" ]; then
+      status="$(printf '%s\n' "$receipt" | jq -r '.status // empty' 2>/dev/null || true)"
+      if [ -n "$status" ]; then
+        printf '%s\n' "$status"
+        return 0
+      fi
+    fi
+    now=$(date +%s)
+    if [ "$now" -ge "$deadline" ]; then
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+require_sp_tx_success() {
+  local step_name="${1:?step name required}"
+  local cmd_output="${2:-}"
+  local tx_hash receipt_status
+
+  tx_hash="$(extract_evm_tx_hash_from_output "$cmd_output")"
+  if [ -z "$tx_hash" ]; then
+    echo "$cmd_output"
+    echo "FAIL: ${step_name} did not emit a transaction hash"
+    exit 1
+  fi
+
+  receipt_status="$(wait_for_evm_receipt_status "$tx_hash" 30 || true)"
+  if [ -z "$receipt_status" ]; then
+    echo "$cmd_output"
+    echo "FAIL: ${step_name} tx ${tx_hash} did not produce a receipt in time"
+    exit 1
+  fi
+  if [ "$receipt_status" != "0x1" ]; then
+    echo "$cmd_output"
+    echo "FAIL: ${step_name} tx ${tx_hash} reverted on-chain (status=${receipt_status})"
+    exit 1
   fi
 }
 
@@ -263,15 +487,23 @@ if [ -z "$SUCCESSOR_OPERATOR" ] || [ "$SUCCESSOR_OPERATOR" = "null" ]; then
 fi
 print_success "selected successor ${SUCCESSOR_CONTAINER} (sp_id=${SUCCESSOR_SP_ID}) for manual failover"
 
-print_test_section "Step 4: pause primary SP container"
+print_test_section "Step 4: force the primary SP into on-chain exiting status"
+submit_forced_exit_proposal "$PRIMARY_SP"
+if ! wait_for_sp_status "$PRIMARY_SP" "STATUS_FORCED_EXITING" 180; then
+  echo "FAIL: primary SP never entered STATUS_FORCED_EXITING"
+  exit 1
+fi
+print_success "primary SP entered STATUS_FORCED_EXITING"
+
+print_test_section "Step 5: pause primary SP container"
 docker pause "$PRIMARY_SP_CONTAINER" >/dev/null
 PRIMARY_PAUSED=1
 sleep 3
 print_success "primary container paused"
 
-print_test_section "Step 5: verify forced primary endpoint is unavailable"
+print_test_section "Step 6: verify forced primary endpoint is unavailable"
 remove_file_docker_aware "$PRIMARY_ONLY_DOWNLOAD_FILE"
-if primary_get_out="$(exec_moca_cmd_signed object get --spEndpoint "$PRIMARY_SP_ENDPOINT" "$OBJECT_URL" "$PRIMARY_ONLY_DOWNLOAD_FILE")"; then
+if primary_get_out="$(timed_object_get 20 object get --spEndpoint "$PRIMARY_SP_ENDPOINT" "$OBJECT_URL" "$PRIMARY_ONLY_DOWNLOAD_FILE")"; then
   echo "$primary_get_out"
   echo "FAIL: object get unexpectedly succeeded when forced to use paused primary endpoint ${PRIMARY_SP_ENDPOINT}"
   exit 1
@@ -279,16 +511,13 @@ fi
 remove_file_docker_aware "$PRIMARY_ONLY_DOWNLOAD_FILE"
 print_success "forced primary endpoint download failed as expected"
 
-print_test_section "Step 6: manually reserve swap-in on successor"
+print_test_section "Step 7: manually reserve swap-in on successor"
 swapin_out="$(run_successor_swap_cmd "$SUCCESSOR_CONTAINER" swapIn --config /root/.moca-sp/config.toml --vgf "$BUCKET_FAMILY_ID" --gvgId 0 --targetSP "$PRIMARY_SP_ID")"
 echo "$swapin_out"
-if ! printf '%s\n' "$swapin_out" | grep -qiE 'tx hash|txhash|broadcast|success'; then
-  echo "FAIL: swapIn did not report a successful submission"
-  exit 1
-fi
+require_sp_tx_success "swapIn" "$swapin_out"
 
 if [ "$GVG_COUNT" != "0" ]; then
-  print_test_section "Step 7: recover family on successor"
+  print_test_section "Step 8: recover family on successor"
   recover_out="$(run_successor_swap_cmd "$SUCCESSOR_CONTAINER" recover-vgf --config /root/.moca-sp/config.toml --vgf "$BUCKET_FAMILY_ID")"
   echo "$recover_out"
   if printf '%s\n' "$recover_out" | grep -qiE 'panic|fatal|error'; then
@@ -296,25 +525,22 @@ if [ "$GVG_COUNT" != "0" ]; then
     exit 1
   fi
 else
-  print_test_section "Step 7: skip recover-vgf for empty family"
+  print_test_section "Step 8: skip recover-vgf for empty family"
   print_success "family ${BUCKET_FAMILY_ID} has no GVGs; recover-vgf not needed"
 fi
 
-print_test_section "Step 8: complete swap-in on successor"
+print_test_section "Step 9: complete swap-in on successor"
 complete_swapin_out="$(run_successor_swap_cmd "$SUCCESSOR_CONTAINER" completeSwapIn --config /root/.moca-sp/config.toml --vgf "$BUCKET_FAMILY_ID" --gvgId 0)"
 echo "$complete_swapin_out"
-if ! printf '%s\n' "$complete_swapin_out" | grep -qiE 'tx hash|txhash|broadcast|success'; then
-  echo "FAIL: completeSwapIn did not report a successful submission"
-  exit 1
-fi
+require_sp_tx_success "completeSwapIn" "$complete_swapin_out"
 
-print_test_section "Step 9: wait for family primary to switch to successor"
+print_test_section "Step 10: wait for family primary to switch to successor"
 NEW_PRIMARY_SP_ID="$(wait_for_gvg_primary_sp_change "$BUCKET_FAMILY_ID" "$BEFORE_PRIMARY_SP_ID" 180)"
 assert_eq "$NEW_PRIMARY_SP_ID" "$SUCCESSOR_SP_ID" "family primary switched to the selected successor SP"
 
-print_test_section "Step 10: verify object get succeeds after manual failover"
+print_test_section "Step 11: verify object get succeeds after manual failover"
 remove_file_docker_aware "$DOWNLOAD_FILE"
-get_out="$(exec_moca_cmd_signed object get "$OBJECT_URL" "$DOWNLOAD_FILE" || true)"
+get_out="$(timed_object_get 60 object get "$OBJECT_URL" "$DOWNLOAD_FILE" || true)"
 if [ ! -f "$DOWNLOAD_FILE" ]; then
   echo "$get_out"
   echo "FAIL: object get did not produce a downloaded file after manual failover"
@@ -325,7 +551,7 @@ SOURCE_SHA="$(sha256_file "$SOURCE_FILE")"
 DOWNLOAD_SHA="$(sha256_file_docker_aware "$DOWNLOAD_FILE" || true)"
 assert_eq "$DOWNLOAD_SHA" "$SOURCE_SHA" "downloaded object matches original sha256"
 
-print_test_section "Step 11: resume original primary container"
+print_test_section "Step 12: resume original primary container"
 docker unpause "$PRIMARY_SP_CONTAINER" >/dev/null
 PRIMARY_PAUSED=0
 print_success "primary container resumed"

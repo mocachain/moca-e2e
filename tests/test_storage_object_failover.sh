@@ -118,7 +118,7 @@ timed_object_get() {
 exec_validator_mocad() {
   local validator_index="${1:?validator index required}"
   shift
-  docker exec "validator-${validator_index}" mocad "$@" --home /root/.mocad 2>/dev/null
+  docker exec "validator-${validator_index}" mocad "$@" --home /root/.mocad
 }
 
 current_proposal_count() {
@@ -223,7 +223,7 @@ EOF
 
   printf '%s\n' "$proposal_json" | docker exec -i validator-0 sh -lc "cat > ${tmpfile}"
   submit_out="$(exec_validator_mocad 0 tx gov submit-proposal "${tmpfile}" \
-    --from validator0 \
+    --from validator-0 \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node tcp://localhost:26657 \
@@ -253,7 +253,7 @@ EOF
 
   for validator_name in $(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '^validator-[0-9]+$' | sort -V); do
     vote_out="$(docker exec "$validator_name" mocad tx gov vote "$proposal_id" yes \
-      --from "validator${validator_name#validator-}" \
+      --from "$validator_name" \
       --keyring-backend test \
       --chain-id "$CHAIN_ID" \
       --node tcp://localhost:26657 \

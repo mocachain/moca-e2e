@@ -126,6 +126,11 @@ if [ -z "$SP_ID" ] || [ "$SP_ID" = "null" ]; then
   echo "SKIP: cannot resolve on-chain SP ID for ${TARGET_SP}"
   exit 0
 fi
+TARGET_SP_ENDPOINT="$(echo "$SP_INFO" | jq -r '.storage_provider.endpoint // .storageProvider.endpoint // empty' 2>/dev/null || true)"
+if [ -z "$TARGET_SP_ENDPOINT" ] || [ "$TARGET_SP_ENDPOINT" = "null" ]; then
+  echo "SKIP: cannot resolve endpoint for target SP ${TARGET_SP}"
+  exit 0
+fi
 
 BUCKET_NAME="e2e-sp-exit-$(date +%s)-${RANDOM}"
 BUCKET_URL="moca://${BUCKET_NAME}"
@@ -135,9 +140,13 @@ SECONDARY_OBJECT_NAME="secondary_exit_obj.txt"
 HOST_TEST_FILE="$(create_test_file "/tmp/${OBJECT_NAME}" "sp exit object $(date)")"
 CONTAINER_TEST_FILE="/tmp/${OBJECT_NAME}"
 SECONDARY_OBJECT_REL=""
+DOWNLOAD_FILE="/tmp/${BUCKET_NAME}-downloaded.txt"
+TARGET_ONLY_DOWNLOAD_FILE="/tmp/${BUCKET_NAME}-from-exited-sp.txt"
 
 cleanup() {
   rm -f "$HOST_TEST_FILE"
+  remove_file_docker_aware "$DOWNLOAD_FILE"
+  remove_file_docker_aware "$TARGET_ONLY_DOWNLOAD_FILE"
   if [ -n "${SECONDARY_OBJECT_REL:-}" ]; then
     exec_moca_cmd object rm "$SECONDARY_OBJECT_REL" >/dev/null 2>&1 || true
   fi
@@ -504,6 +513,7 @@ PRIMARY_COUNT_BEFORE="$(gvg_stat_value "$SP_ID" primary_count)"
 SECONDARY_COUNT_BEFORE="$(gvg_stat_value "$SP_ID" secondary_count)"
 echo "  primary_count_before=${PRIMARY_COUNT_BEFORE}"
 echo "  secondary_count_before=${SECONDARY_COUNT_BEFORE}"
+SOURCE_SHA="$(sha256_file "$HOST_TEST_FILE")"
 if gvg_statistics_query_supported; then
   if [ "$EXPECT_EMPTY_FAMILY_BLOCK" = "1" ]; then
     assert_eq "$PRIMARY_COUNT_BEFORE" "0" "target SP has no primary GVGs before exit in empty-family mode"
@@ -681,6 +691,39 @@ if [ -n "$SUCCESSOR_IDS" ] && [ "$EXPECT_EMPTY_FAMILY_BLOCK" != "1" ]; then
 $SUCCESSOR_IDS
 EOF
   echo "  OK: successor SPs from query.sp.exit exist on chain"
+fi
+
+if [ "$EXPECT_EMPTY_FAMILY_BLOCK" != "1" ]; then
+  print_test_section "verify object downloads from successor after original SP exits"
+  NEW_PRIMARY_SP_ENDPOINT="$(printf '%s\n' "$SP_JSON_AFTER" | jq -r --arg sid "$NEW_PRIMARY_SP_ID" '.sps[] | select((.id|tostring) == $sid) | .endpoint' 2>/dev/null | head -1)"
+  if [ -z "$NEW_PRIMARY_SP_ENDPOINT" ] || [ "$NEW_PRIMARY_SP_ENDPOINT" = "null" ]; then
+    echo "FAIL: could not resolve endpoint for new primary SP ID ${NEW_PRIMARY_SP_ID}"
+    exit 1
+  fi
+
+  remove_file_docker_aware "$DOWNLOAD_FILE"
+  download_out="$(timed_object_get 60 object get --spEndpoint "$NEW_PRIMARY_SP_ENDPOINT" "$OBJECT_REL" "$DOWNLOAD_FILE" || true)"
+  if [ ! -f "$DOWNLOAD_FILE" ]; then
+    echo "$download_out"
+    echo "FAIL: object get from successor SP did not produce a downloaded file after exit"
+    exit 1
+  fi
+  DOWNLOAD_SHA="$(sha256_file_docker_aware "$DOWNLOAD_FILE" || true)"
+  assert_eq "$DOWNLOAD_SHA" "$SOURCE_SHA" "downloaded object matches original sha256 after successor takeover"
+  echo "  OK: object downloaded successfully from successor endpoint ${NEW_PRIMARY_SP_ENDPOINT}"
+
+  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${TARGET_SP}$"; then
+    remove_file_docker_aware "$TARGET_ONLY_DOWNLOAD_FILE"
+    if target_get_out="$(timed_object_get 20 object get --spEndpoint "$TARGET_SP_ENDPOINT" "$OBJECT_REL" "$TARGET_ONLY_DOWNLOAD_FILE")"; then
+      echo "$target_get_out"
+      echo "FAIL: object get unexpectedly succeeded via exited SP endpoint ${TARGET_SP_ENDPOINT}"
+      exit 1
+    fi
+    remove_file_docker_aware "$TARGET_ONLY_DOWNLOAD_FILE"
+    echo "  OK: exited SP endpoint no longer serves object downloads"
+  else
+    echo "  INFO: target SP container ${TARGET_SP} is still running locally; chain removal is used as the exit-offline signal"
+  fi
 fi
 
 trap - EXIT

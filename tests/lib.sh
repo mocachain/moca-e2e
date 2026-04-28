@@ -231,6 +231,68 @@ wait_for_object_sealed() {
   done
 }
 
+sha256_file() {
+  local path="${1:?path required}"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print $1}'
+    return 0
+  fi
+  shasum -a 256 "$path" | awk '{print $1}'
+}
+
+sha256_file_docker_aware() {
+  local path="${1:?path required}"
+  local target
+  if [ -r "$path" ]; then
+    sha256_file "$path"
+    return 0
+  fi
+
+  target="$(resolve_moca_cmd 2>/dev/null || true)"
+  if [[ "$target" == docker:* ]]; then
+    docker exec "${target#docker:}" sh -lc '
+      if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk "{print \$1}"
+      else
+        shasum -a 256 "$1" | awk "{print \$1}"
+      fi
+    ' sh "$path" 2>/dev/null
+    return $?
+  fi
+
+  return 1
+}
+
+remove_file_docker_aware() {
+  local path="${1:?path required}"
+  local target
+  rm -f "$path" >/dev/null 2>&1 || true
+
+  target="$(resolve_moca_cmd 2>/dev/null || true)"
+  if [[ "$target" == docker:* ]]; then
+    docker exec "${target#docker:}" rm -f "$path" >/dev/null 2>&1 || true
+    rm -f "$path" >/dev/null 2>&1 || true
+  fi
+}
+
+timed_object_get() {
+  local timeout_seconds="${1:?timeout seconds required}"
+  shift
+  local target
+
+  target="$(resolve_moca_cmd 2>/dev/null)" || return 127
+  if [[ "$target" == docker:* ]]; then
+    docker exec "${target#docker:}" sh -lc '
+      timeout="$1"
+      shift
+      exec timeout "$timeout" moca-cmd -p /root/.moca-cmd/password.txt "$@"
+    ' sh "$timeout_seconds" "$@" 2>/dev/null
+    return $?
+  fi
+
+  exec_moca_cmd_signed "$@"
+}
+
 # --- Assertion helpers ---
 assert_gt() {
   local actual="$1" expected="$2" msg="$3"

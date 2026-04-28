@@ -19,7 +19,6 @@ if ! resolve_moca_cmd >/dev/null 2>&1; then
   echo "SKIP: moca-cmd required for object get failover"
   exit 0
 fi
-MOCA_CMD_TARGET="$(resolve_moca_cmd 2>/dev/null || true)"
 
 SP_CHECK="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo "")"
 NUM_SPS="$(echo "$SP_CHECK" | jq -r '.sps | length // 0' 2>/dev/null || echo "0")"
@@ -60,60 +59,6 @@ if [ "$PRIMARY_STATUS" != "STATUS_IN_SERVICE" ] && [ "$PRIMARY_STATUS" != "0" ];
   echo "SKIP: local primary SP ${PRIMARY_SP_CONTAINER} is not IN_SERVICE (status=${PRIMARY_STATUS:-unknown})"
   exit 0
 fi
-
-sha256_file() {
-  local path="${1:?path required}"
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$path" | awk '{print $1}'
-    return 0
-  fi
-  shasum -a 256 "$path" | awk '{print $1}'
-}
-
-sha256_file_docker_aware() {
-  local path="${1:?path required}"
-  if [ -r "$path" ]; then
-    sha256_file "$path"
-    return 0
-  fi
-  if [[ "$MOCA_CMD_TARGET" == docker:* ]]; then
-    docker exec "${MOCA_CMD_TARGET#docker:}" sh -lc '
-      if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | awk "{print \$1}"
-      else
-        shasum -a 256 "$1" | awk "{print \$1}"
-      fi
-    ' sh "$path" 2>/dev/null
-    return $?
-  fi
-  return 1
-}
-
-remove_file_docker_aware() {
-  local path="${1:?path required}"
-  rm -f "$path" >/dev/null 2>&1 || true
-  if [ -e "$path" ] && [[ "$MOCA_CMD_TARGET" == docker:* ]]; then
-    docker exec "${MOCA_CMD_TARGET#docker:}" rm -f "$path" >/dev/null 2>&1 || true
-    rm -f "$path" >/dev/null 2>&1 || true
-  fi
-}
-
-timed_object_get() {
-  local timeout_seconds="${1:?timeout seconds required}"
-  shift
-
-  if [[ "$MOCA_CMD_TARGET" == docker:* ]]; then
-    local container="${MOCA_CMD_TARGET#docker:}"
-    docker exec "$container" sh -lc '
-      timeout="$1"
-      shift
-      exec timeout "$timeout" moca-cmd -p /root/.moca-cmd/password.txt "$@"
-    ' sh "$timeout_seconds" "$@" 2>/dev/null
-    return $?
-  fi
-
-  exec_moca_cmd_signed "$@"
-}
 
 exec_validator_mocad() {
   local validator_index="${1:?validator index required}"

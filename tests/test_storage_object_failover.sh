@@ -349,6 +349,57 @@ run_successor_swap_cmd() {
   docker exec "$container" moca-sp "$@" 2>&1 || true
 }
 
+extract_recover_process_json() {
+  printf '%s\n' "${1:-}" | awk '/^\[/{line=$0} END{print line}'
+}
+
+wait_for_successor_recover_complete() {
+  local container="${1:?container required}"
+  local vgf_id="${2:?vgf id required}"
+  local timeout="${3:-300}"
+  local deadline now query_out recover_json recover_summary
+
+  deadline=$(( $(date +%s) + timeout ))
+  while :; do
+    query_out="$(run_successor_swap_cmd "$container" query-recover-p --config /root/.moca-sp/config.toml --vgf "$vgf_id" --gvgId 0)"
+    recover_json="$(extract_recover_process_json "$query_out")"
+
+    if [ -n "$recover_json" ] && [ "$recover_json" != "[]" ]; then
+      if printf '%s\n' "$recover_json" | jq -e '
+        length > 0 and
+        all(.[]; .status == "Successful" and (.failed_object_total_count // 0) == 0)
+      ' >/dev/null 2>&1; then
+        printf '%s\n' "$recover_json"
+        return 0
+      fi
+
+      recover_summary="$(printf '%s\n' "$recover_json" | jq -c '
+        [.[] | {
+          gvg_id: .virtual_group_id,
+          status: .status,
+          failed_object_total_count: (.failed_object_total_count // 0),
+          object_count: (.object_count // 0)
+        }]
+      ' 2>/dev/null || true)"
+      if [ -n "$recover_summary" ]; then
+        echo "  recover progress: ${recover_summary}"
+      else
+        echo "$query_out"
+      fi
+    else
+      echo "$query_out"
+    fi
+
+    now=$(date +%s)
+    if [ "$now" -ge "$deadline" ]; then
+      echo "  wait_for_successor_recover_complete: timeout after ${timeout}s" >&2
+      [ -n "$recover_json" ] && printf '%s\n' "$recover_json" >&2
+      return 1
+    fi
+    sleep 5
+  done
+}
+
 PRIMARY_PAUSED=0
 BUCKET_NAME="$(generate_bucket_name "e2e-obj-failover")"
 BUCKET_URL="moca://${BUCKET_NAME}"
@@ -469,21 +520,28 @@ if [ "$GVG_COUNT" != "0" ]; then
     echo "FAIL: recover-vgf reported an error"
     exit 1
   fi
+
+  print_test_section "Step 9: wait for successor recovery to complete"
+  if ! recover_process_out="$(wait_for_successor_recover_complete "$SUCCESSOR_CONTAINER" "$BUCKET_FAMILY_ID" 300)"; then
+    echo "FAIL: successor recovery did not finish successfully"
+    exit 1
+  fi
+  echo "$recover_process_out"
 else
   print_test_section "Step 8: skip recover-vgf for empty family"
   print_success "family ${BUCKET_FAMILY_ID} has no GVGs; recover-vgf not needed"
 fi
 
-print_test_section "Step 9: complete swap-in on successor"
+print_test_section "Step 10: complete swap-in on successor"
 complete_swapin_out="$(run_successor_swap_cmd "$SUCCESSOR_CONTAINER" completeSwapIn --config /root/.moca-sp/config.toml --vgf "$BUCKET_FAMILY_ID" --gvgId 0)"
 echo "$complete_swapin_out"
 require_sp_tx_success "completeSwapIn" "$complete_swapin_out"
 
-print_test_section "Step 10: wait for family primary to switch to successor"
+print_test_section "Step 11: wait for family primary to switch to successor"
 NEW_PRIMARY_SP_ID="$(wait_for_gvg_primary_sp_change "$BUCKET_FAMILY_ID" "$BEFORE_PRIMARY_SP_ID" 180)"
 assert_eq "$NEW_PRIMARY_SP_ID" "$SUCCESSOR_SP_ID" "family primary switched to the selected successor SP"
 
-print_test_section "Step 11: verify object get succeeds after manual failover"
+print_test_section "Step 12: verify object get succeeds after manual failover"
 remove_file_docker_aware "$DOWNLOAD_FILE"
 get_out="$(timed_object_get 60 object get "$OBJECT_URL" "$DOWNLOAD_FILE" || true)"
 if [ ! -f "$DOWNLOAD_FILE" ]; then
@@ -496,7 +554,7 @@ SOURCE_SHA="$(sha256_file "$SOURCE_FILE")"
 DOWNLOAD_SHA="$(sha256_file_docker_aware "$DOWNLOAD_FILE" || true)"
 assert_eq "$DOWNLOAD_SHA" "$SOURCE_SHA" "downloaded object matches original sha256"
 
-print_test_section "Step 12: resume original primary container"
+print_test_section "Step 13: resume original primary container"
 docker unpause "$PRIMARY_SP_CONTAINER" >/dev/null
 PRIMARY_PAUSED=0
 print_success "primary container resumed"

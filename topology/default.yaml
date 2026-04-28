@@ -43,7 +43,7 @@ services:
 
 ports:
   rpc_base: 26657
-  grpc_base: 9090
+  grpc_base: 19090
   rest_base: 1317
   evm_rpc_base: 8545
   evm_ws_base: 8560

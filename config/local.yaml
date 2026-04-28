@@ -6,7 +6,7 @@ environment: local
 chain:
   chain_id: moca_5151-1
   rpc: http://localhost:26657
-  grpc: localhost:9090
+  grpc: localhost:19090
   rest: http://localhost:1317
   evm_rpc: http://localhost:8545
   evm_ws: ws://localhost:8546

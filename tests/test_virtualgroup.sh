@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # E2E test: virtual group module — query GVGs and global virtual group families
+# shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 
 ENV="${1:-local}"
-CONFIG_FILE="${2:-config/local.yaml}"
+_CONFIG_FILE="${2:-config/local.yaml}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=libs/core.sh
+source "$SCRIPT_DIR/libs/core.sh"
 
 echo "Testing virtual group module..."
 

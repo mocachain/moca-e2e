@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # E2E test: deploy and interact with ERC20 contract
+# shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 
 ENV="${1:-local}"
-CONFIG_FILE="${2:-config/local.yaml}"
+_CONFIG_FILE="${2:-config/local.yaml}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=libs/core.sh
+source "$SCRIPT_DIR/libs/core.sh"
 
 require_write_enabled "ERC20 test"
 
@@ -17,7 +19,6 @@ fi
 echo "Testing ERC20 deploy and transfer..."
 
 # Get test private key
-METADATA="$(dirname "$SCRIPT_DIR")/test-results/metadata.json"
 PRIVKEY=$(docker exec "$VALIDATOR_CONTAINER" cat /shared/metadata.json 2>/dev/null | jq -r '.test_account.evm_privkey // empty' 2>/dev/null || echo "")
 
 if [ -z "$PRIVKEY" ] || [ "$PRIVKEY" = "null" ]; then

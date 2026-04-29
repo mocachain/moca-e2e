@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # E2E test: send a bank transfer and verify balances change
+# shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 
 ENV="${1:-local}"
-CONFIG_FILE="${2:-config/local.yaml}"
+_CONFIG_FILE="${2:-config/local.yaml}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=libs/core.sh
+source "$SCRIPT_DIR/libs/core.sh"
+# shellcheck source=libs/assertions.sh
+source "$SCRIPT_DIR/libs/assertions.sh"
 
 require_write_enabled "bank transfer test"
 require_test_key

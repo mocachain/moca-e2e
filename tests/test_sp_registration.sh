@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # E2E test: verify storage providers are registered and in service
+# shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 
 ENV="${1:-local}"
-CONFIG_FILE="${2:-config/local.yaml}"
+_CONFIG_FILE="${2:-config/local.yaml}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=libs/core.sh
+source "$SCRIPT_DIR/libs/core.sh"
 
 if [ "$ENV" = "mainnet" ]; then echo "SKIP: not safe for mainnet"; exit 0; fi
 
@@ -24,7 +26,6 @@ if [ "$NUM_SPS" -le 0 ]; then
 fi
 
 # Check each SP's status
-FAILED=0
 for i in $(seq 0 $((NUM_SPS - 1))); do
   SP_ADDR=$(echo "$SP_JSON" | jq -r ".sps[$i].operator_address" 2>/dev/null)
   SP_STATUS=$(echo "$SP_JSON" | jq -r ".sps[$i].status" 2>/dev/null)

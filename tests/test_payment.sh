@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 # E2E: payment account create / list / stream-record / deposit / withdraw
 # (devcontainer payment_test parity: moca-cmd path when available).
+# shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 
 ENV="${1:-local}"
-CONFIG_FILE="${2:-config/local.yaml}"
+_CONFIG_FILE="${2:-config/local.yaml}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=lib.sh
-source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=libs/core.sh
+source "$SCRIPT_DIR/libs/core.sh"
+# shellcheck source=libs/assertions.sh
+source "$SCRIPT_DIR/libs/assertions.sh"
+# shellcheck source=libs/moca_cmd.sh
+source "$SCRIPT_DIR/libs/moca_cmd.sh"
 
 require_write_enabled "payment test"
 require_test_key

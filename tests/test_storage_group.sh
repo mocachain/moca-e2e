@@ -3,13 +3,16 @@
 # When moca-cmd is available: create -> head -> update members -> head-member / ls-member ->
 # setTag -> ls -> rm (aligned with devcontainer group_test flow).
 # Otherwise: mocad tx storage create-group / head-group / update-group-member / delete-group.
+# shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 
 ENV="${1:-local}"
 _CONFIG_FILE="${2:-config/local.yaml}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=lib.sh
-source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=libs/core.sh
+source "$SCRIPT_DIR/libs/core.sh"
+# shellcheck source=libs/moca_cmd.sh
+source "$SCRIPT_DIR/libs/moca_cmd.sh"
 
 require_write_enabled "storage group test"
 require_test_key

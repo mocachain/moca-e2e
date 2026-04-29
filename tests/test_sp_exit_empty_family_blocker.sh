@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
-# E2E: complete SP graceful-exit workflow.
+# E2E: reproduce the empty-GVG family blocker during complete SP exit.
 # shellcheck shell=bash source-path=SCRIPTDIR
-# Covers:
-# - create bucket/object on the target SP
-# - query pre-exit SP/GVG state
-# - send sp.exit from the target SP container
-# - assert sp exit scheduler is active
-# - verify bucket/object remain available after exit
-# - verify bucket primary SP changes away from the exited SP
-# - verify chain SP list reflects graceful exiting
 set -euo pipefail
 
 ENV="${1:-local}"
@@ -29,14 +21,14 @@ if [ "$ENV" = "mainnet" ]; then echo "SKIP: not safe for mainnet"; exit 0; fi
 if [ "$ENV" != "local" ]; then echo "SKIP: SP exit test only on local"; exit 0; fi
 
 if ! resolve_moca_cmd >/dev/null 2>&1; then
-  echo "SKIP: moca-cmd required for complete SP exit test"
+  echo "SKIP: moca-cmd required for empty-family blocker test"
   exit 0
 fi
 
 SP_JSON="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo '{}')"
 NUM_SPS="$(echo "$SP_JSON" | jq -r '.sps | length // 0' 2>/dev/null || echo "0")"
 if [ "$NUM_SPS" -lt 3 ]; then
-  echo "SKIP: need at least 3 SPs to exercise graceful exit"
+  echo "SKIP: need at least 3 SPs to exercise graceful exit blocker coverage"
   exit 0
 fi
 
@@ -70,11 +62,6 @@ if [ -z "$SP_ID" ] || [ "$SP_ID" = "null" ]; then
   echo "SKIP: cannot resolve on-chain SP ID for ${TARGET_SP}"
   exit 0
 fi
-TARGET_SP_ENDPOINT="$(echo "$SP_INFO" | jq -r '.storage_provider.endpoint // .storageProvider.endpoint // empty' 2>/dev/null || true)"
-if [ -z "$TARGET_SP_ENDPOINT" ] || [ "$TARGET_SP_ENDPOINT" = "null" ]; then
-  echo "SKIP: cannot resolve endpoint for target SP ${TARGET_SP}"
-  exit 0
-fi
 
 BUCKET_NAME="e2e-sp-exit-$(date +%s)-${RANDOM}"
 BUCKET_URL="moca://${BUCKET_NAME}"
@@ -84,13 +71,9 @@ SECONDARY_OBJECT_NAME="secondary_exit_obj.txt"
 HOST_TEST_FILE="$(create_test_file "/tmp/${OBJECT_NAME}" "sp exit object $(date)")"
 CONTAINER_TEST_FILE="/tmp/${OBJECT_NAME}"
 SECONDARY_OBJECT_REL=""
-DOWNLOAD_FILE="/tmp/${BUCKET_NAME}-downloaded.txt"
-TARGET_ONLY_DOWNLOAD_FILE="/tmp/${BUCKET_NAME}-from-exited-sp.txt"
 
 cleanup() {
   rm -f "$HOST_TEST_FILE"
-  remove_file_docker_aware "$DOWNLOAD_FILE"
-  remove_file_docker_aware "$TARGET_ONLY_DOWNLOAD_FILE"
   if [ -n "${SECONDARY_OBJECT_REL:-}" ]; then
     exec_moca_cmd object rm "$SECONDARY_OBJECT_REL" >/dev/null 2>&1 || true
   fi
@@ -102,7 +85,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "Testing complete SP exit on ${TARGET_SP} (sp_id=${SP_ID}, operator=${OPERATOR})..."
+echo "Testing empty-family blocker on ${TARGET_SP} (sp_id=${SP_ID}, operator=${OPERATOR})..."
 
 print_test_section "create bucket on target SP"
 bucket_out="$(moca_cmd_tx bucket create --primarySP "$OPERATOR" "$BUCKET_URL" || true)"
@@ -112,17 +95,17 @@ if ! echo "$bucket_out" | grep -q "$BUCKET_NAME"; then
   exit 1
 fi
 
-BEFORE_BUCKET_HEAD="$(exec_moca_cmd bucket head "$BUCKET_URL" 2>&1 || true)"
-if ! echo "$BEFORE_BUCKET_HEAD" | grep -q "bucket_name:\"$BUCKET_NAME\""; then
-  echo "$BEFORE_BUCKET_HEAD"
+bucket_head_before="$(exec_moca_cmd bucket head "$BUCKET_URL" 2>&1 || true)"
+if ! echo "$bucket_head_before" | grep -q "bucket_name:\"$BUCKET_NAME\""; then
+  echo "$bucket_head_before"
   echo "FAIL: bucket head did not return the created bucket"
   exit 1
 fi
 
-BUCKET_FAMILY_ID="$(printf '%s\n' "$BEFORE_BUCKET_HEAD" | awk -F': ' '/^virtual_group_family_id:/ {print $2; exit}')"
-BEFORE_PRIMARY_SP_ID="$(printf '%s\n' "$BEFORE_BUCKET_HEAD" | awk -F': ' '/^primary SP ID:/ {print $2; exit}')"
+BUCKET_FAMILY_ID="$(printf '%s\n' "$bucket_head_before" | awk -F': ' '/^virtual_group_family_id:/ {print $2; exit}')"
+BEFORE_PRIMARY_SP_ID="$(printf '%s\n' "$bucket_head_before" | awk -F': ' '/^primary SP ID:/ {print $2; exit}')"
 if [ -z "$BUCKET_FAMILY_ID" ] || [ -z "$BEFORE_PRIMARY_SP_ID" ]; then
-  echo "$BEFORE_BUCKET_HEAD"
+  echo "$bucket_head_before"
   echo "FAIL: could not resolve bucket family ID / primary SP ID before exit"
   exit 1
 fi
@@ -145,7 +128,7 @@ if ! wait_for_object_sealed "$OBJECT_REL" 180; then
 fi
 
 print_test_section "create auxiliary bucket where target SP is a secondary"
-if ! create_bucket_with_target_as_secondary "$SP_ID"; then
+if ! create_bucket_with_target_as_secondary "$SP_ID" "$SP_JSON"; then
   exit 1
 fi
 echo "  OK: auxiliary bucket uses target SP ${SP_ID} as secondary"
@@ -166,13 +149,36 @@ if ! wait_for_object_sealed "$SECONDARY_OBJECT_REL" 180; then
   exit 1
 fi
 
-print_test_section "record pre-exit state"
-OBJECT_HEAD_BEFORE="$(exec_moca_cmd object head "$OBJECT_REL" 2>&1 || true)"
-if ! echo "$OBJECT_HEAD_BEFORE" | grep -q "object_name:\"$OBJECT_NAME\""; then
-  echo "$OBJECT_HEAD_BEFORE"
-  echo "FAIL: object head before exit did not return the test object"
+print_test_section "delete target primary bucket to leave an empty family"
+remove_object_out="$(exec_moca_cmd_signed object rm "$OBJECT_REL" || true)"
+echo "$remove_object_out" | head -5
+wait_for_block 3
+
+remove_bucket_out="$(exec_moca_cmd_signed bucket rm "$BUCKET_URL" || true)"
+echo "$remove_bucket_out" | head -5
+wait_for_block 3
+
+if ! wait_for_gvg_family_gvg_count "$BUCKET_FAMILY_ID" "1" 180; then
+  echo "FAIL: target family did not retain the expected single empty GVG after deleting the primary bucket"
   exit 1
 fi
+if ! wait_for_gvg_stored_size "$BUCKET_FAMILY_ID" "0" 180; then
+  echo "FAIL: target family's remaining GVG did not drain to stored_size=0 after deleting the primary bucket"
+  exit 1
+fi
+
+EMPTY_FAMILY_PRIMARY_SP_ID="$(gvg_family_primary_sp_id "$BUCKET_FAMILY_ID")"
+EMPTY_FAMILY_GVG_COUNT="$(gvg_family_gvg_count "$BUCKET_FAMILY_ID")"
+EMPTY_FAMILY_GVG_STORED_SIZE="$(gvg_stored_size_by_family "$BUCKET_FAMILY_ID")"
+echo "  empty_family_id=${BUCKET_FAMILY_ID}"
+echo "  empty_family_primary_sp_id=${EMPTY_FAMILY_PRIMARY_SP_ID:-unknown}"
+echo "  empty_family_gvg_count=${EMPTY_FAMILY_GVG_COUNT}"
+echo "  empty_family_gvg_stored_size=${EMPTY_FAMILY_GVG_STORED_SIZE:-unknown}"
+assert_eq "$EMPTY_FAMILY_PRIMARY_SP_ID" "$SP_ID" "empty family remains owned by target SP before exit"
+assert_eq "$EMPTY_FAMILY_GVG_COUNT" "1" "target family retains one empty GVG before exit"
+assert_eq "$EMPTY_FAMILY_GVG_STORED_SIZE" "0" "target family's remaining GVG is empty before exit"
+
+print_test_section "record pre-exit state"
 GVG_BEFORE="$(exec_mocad query virtualgroup global-virtual-group-by-family-id "$BUCKET_FAMILY_ID" --node "$TM_RPC" --output json 2>/dev/null || echo '{}')"
 SECONDARY_SP_IDS_BEFORE="$(printf '%s\n' "$GVG_BEFORE" | jq -c '.global_virtual_groups[0].secondary_sp_ids // []' 2>/dev/null || true)"
 echo "  gvg_family_id=${BUCKET_FAMILY_ID}"
@@ -183,8 +189,8 @@ PRIMARY_COUNT_BEFORE="$(gvg_stat_value "$SP_ID" primary_count)"
 SECONDARY_COUNT_BEFORE="$(gvg_stat_value "$SP_ID" secondary_count)"
 echo "  primary_count_before=${PRIMARY_COUNT_BEFORE}"
 echo "  secondary_count_before=${SECONDARY_COUNT_BEFORE}"
-SOURCE_SHA="$(sha256_file "$HOST_TEST_FILE")"
 if gvg_statistics_query_supported; then
+  assert_eq "$PRIMARY_COUNT_BEFORE" "0" "target SP has no primary GVGs before exit in empty-family mode"
   assert_gt "$SECONDARY_COUNT_BEFORE" "0" "target SP has secondary GVGs before exit"
 else
   echo "  INFO: skipping GVG statistics assertion because local mocad does not expose gvg-statistics-within-sp"
@@ -223,42 +229,6 @@ if ! echo "$query_out" | jq -e '.self_sp_id >= 0' >/dev/null 2>&1; then
   exit 1
 fi
 
-SUCCESSOR_IDS="$(echo "$query_out" | jq -r '[.swap_out_dest[]?.successor_sp_id] | unique | .[]' 2>/dev/null || true)"
-
-print_test_section "verify bucket and object still exist after exit"
-NEW_PRIMARY_SP_ID="$(wait_for_gvg_primary_sp_change "$BUCKET_FAMILY_ID" "$BEFORE_PRIMARY_SP_ID" 180)"
-assert_ne "$NEW_PRIMARY_SP_ID" "$BEFORE_PRIMARY_SP_ID" "GVG primary SP changed after graceful exit"
-
-BUCKET_HEAD_AFTER="$(exec_moca_cmd bucket head "$BUCKET_URL" 2>&1 || true)"
-if ! echo "$BUCKET_HEAD_AFTER" | grep -q "bucket_name:\"$BUCKET_NAME\""; then
-  echo "$BUCKET_HEAD_AFTER"
-  echo "FAIL: bucket head after exit did not return the bucket"
-  exit 1
-fi
-
-OBJECT_HEAD_AFTER="$(exec_moca_cmd object head "$OBJECT_REL" 2>&1 || true)"
-if ! echo "$OBJECT_HEAD_AFTER" | grep -q "object_name:\"$OBJECT_NAME\""; then
-  echo "$OBJECT_HEAD_AFTER"
-  echo "FAIL: object head after exit did not return the object"
-  exit 1
-fi
-if ! wait_for_object_visible "$BUCKET_URL" "$OBJECT_NAME" 120; then
-  echo "FAIL: object is no longer visible in object ls after exit"
-  exit 1
-fi
-echo "  OK: bucket and object remain accessible after exit"
-echo "  OK: GVG primary SP migrated from ${BEFORE_PRIMARY_SP_ID} to ${NEW_PRIMARY_SP_ID}"
-
-if [ -n "$SUCCESSOR_IDS" ]; then
-  if ! printf '%s\n' "$SUCCESSOR_IDS" | grep -qx "$NEW_PRIMARY_SP_ID"; then
-    echo "  successor_sp_ids from query.sp.exit:"
-    printf '%s\n' "$SUCCESSOR_IDS" | sed 's/^/    - /'
-    echo "FAIL: bucket migrated to unexpected primary SP ID ${NEW_PRIMARY_SP_ID}"
-    exit 1
-  fi
-  echo "  OK: bucket migrated to successor SP ID ${NEW_PRIMARY_SP_ID}"
-fi
-
 if gvg_statistics_query_supported; then
   print_test_section "wait for target SP GVG counts to drain to zero"
   if ! wait_for_gvg_stat_value "$SP_ID" primary_count "0" 180; then
@@ -276,81 +246,42 @@ else
   echo "  INFO: local mocad does not expose gvg-statistics-within-sp; final SP removal is used as the end-to-end completion signal"
 fi
 
+print_test_section "assert empty family leftover exists before complete exit"
+EMPTY_FAMILY_PRIMARY_SP_ID="$(gvg_family_primary_sp_id "$BUCKET_FAMILY_ID")"
+EMPTY_FAMILY_GVG_COUNT="$(gvg_family_gvg_count "$BUCKET_FAMILY_ID")"
+EMPTY_FAMILY_GVG_STORED_SIZE="$(gvg_stored_size_by_family "$BUCKET_FAMILY_ID")"
+echo "  empty_family_id=${BUCKET_FAMILY_ID}"
+echo "  empty_family_primary_sp_id=${EMPTY_FAMILY_PRIMARY_SP_ID:-unknown}"
+echo "  empty_family_gvg_count=${EMPTY_FAMILY_GVG_COUNT}"
+echo "  empty_family_gvg_stored_size=${EMPTY_FAMILY_GVG_STORED_SIZE:-unknown}"
+assert_eq "$EMPTY_FAMILY_PRIMARY_SP_ID" "$SP_ID" "empty family remains owned by exiting SP before complete exit"
+assert_eq "$EMPTY_FAMILY_GVG_COUNT" "1" "empty family retains one empty GVG before complete exit"
+assert_eq "$EMPTY_FAMILY_GVG_STORED_SIZE" "0" "empty family's remaining GVG stays empty before complete exit"
+
 print_test_section "complete final SP exit"
-if wait_for_sp_removed_from_list "$OPERATOR" 90; then
-  echo "  OK: target SP completed final exit automatically"
-else
-  complete_out="$(exec_sp_cmd "$TARGET_SP" -c /root/.moca-sp/config.toml sp.complete.exit --operatorAddress "$OPERATOR" 2>&1 || true)"
-  echo "$complete_out"
-  if ! echo "$complete_out" | grep -q "send complete sp exit txn successfully"; then
-    if wait_for_sp_removed_from_list "$OPERATOR" 30; then
-      echo "  OK: target SP completed final exit automatically while sp.complete.exit was racing"
-    else
-      echo "FAIL: moca-sp sp.complete.exit did not return success"
-      exit 1
-    fi
-  else
-    if ! wait_for_sp_removed_from_list "$OPERATOR" 180; then
-      echo "FAIL: target SP still exists in chain SP list after complete exit"
-      exit 1
-    fi
-    echo "  OK: target SP removed from chain SP list after sp.complete.exit"
-  fi
+complete_out="$(exec_sp_cmd "$TARGET_SP" -c /root/.moca-sp/config.toml sp.complete.exit --operatorAddress "$OPERATOR" 2>&1 || true)"
+echo "$complete_out"
+if wait_for_sp_removed_from_list "$OPERATOR" 30; then
+  echo "FAIL: target SP unexpectedly completed exit even though only an empty family remained"
+  exit 1
 fi
+EMPTY_FAMILY_PRIMARY_SP_ID="$(gvg_family_primary_sp_id "$BUCKET_FAMILY_ID")"
+EMPTY_FAMILY_GVG_COUNT="$(gvg_family_gvg_count "$BUCKET_FAMILY_ID")"
+EMPTY_FAMILY_GVG_STORED_SIZE="$(gvg_stored_size_by_family "$BUCKET_FAMILY_ID")"
+assert_eq "$EMPTY_FAMILY_PRIMARY_SP_ID" "$SP_ID" "empty family still blocks exit after attempted complete exit"
+assert_eq "$EMPTY_FAMILY_GVG_COUNT" "1" "blocking family still retains one empty GVG after attempted complete exit"
+assert_eq "$EMPTY_FAMILY_GVG_STORED_SIZE" "0" "blocking family's remaining GVG stays empty after attempted complete exit"
+echo "  OK: reproduced empty-family blocker; target SP is still present after attempted complete exit"
 
 print_test_section "verify chain SP list after complete exit"
 SP_JSON_AFTER="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo '{}')"
 printf '%s\n' "$SP_JSON_AFTER" | jq -r '.sps[] | "  id=\(.id) status=\(.status) operator=\(.operator_address)"' 2>/dev/null || true
-if printf '%s\n' "$SP_JSON_AFTER" | jq -e --arg op "$OPERATOR" '.sps[] | select(.operator_address == $op)' >/dev/null 2>&1; then
-  echo "FAIL: target SP is still present in chain SP list after complete exit"
+if ! printf '%s\n' "$SP_JSON_AFTER" | jq -e --arg op "$OPERATOR" '.sps[] | select(.operator_address == $op)' >/dev/null 2>&1; then
+  echo "FAIL: target SP disappeared from chain SP list in empty-family blocker mode"
   exit 1
 fi
-echo "  OK: target SP is no longer present in the chain SP list"
-
-if [ -n "$SUCCESSOR_IDS" ]; then
-  while IFS= read -r successor_id; do
-    [ -n "$successor_id" ] || continue
-    if ! printf '%s\n' "$SP_JSON_AFTER" | jq -e --arg sid "$successor_id" '.sps[] | select((.id|tostring) == $sid)' >/dev/null 2>&1; then
-      echo "FAIL: successor SP ID ${successor_id} from query.sp.exit not found in chain SP list"
-      exit 1
-    fi
-  done <<EOF
-$SUCCESSOR_IDS
-EOF
-  echo "  OK: successor SPs from query.sp.exit exist on chain"
-fi
-
-print_test_section "verify object downloads from successor after original SP exits"
-NEW_PRIMARY_SP_ENDPOINT="$(printf '%s\n' "$SP_JSON_AFTER" | jq -r --arg sid "$NEW_PRIMARY_SP_ID" '.sps[] | select((.id|tostring) == $sid) | .endpoint' 2>/dev/null | head -1)"
-if [ -z "$NEW_PRIMARY_SP_ENDPOINT" ] || [ "$NEW_PRIMARY_SP_ENDPOINT" = "null" ]; then
-  echo "FAIL: could not resolve endpoint for new primary SP ID ${NEW_PRIMARY_SP_ID}"
-  exit 1
-fi
-
-remove_file_docker_aware "$DOWNLOAD_FILE"
-download_out="$(timed_object_get 60 object get --spEndpoint "$NEW_PRIMARY_SP_ENDPOINT" "$OBJECT_REL" "$DOWNLOAD_FILE" || true)"
-if [ ! -f "$DOWNLOAD_FILE" ]; then
-  echo "$download_out"
-  echo "FAIL: object get from successor SP did not produce a downloaded file after exit"
-  exit 1
-fi
-DOWNLOAD_SHA="$(sha256_file_docker_aware "$DOWNLOAD_FILE" || true)"
-assert_eq "$DOWNLOAD_SHA" "$SOURCE_SHA" "downloaded object matches original sha256 after successor takeover"
-echo "  OK: object downloaded successfully from successor endpoint ${NEW_PRIMARY_SP_ENDPOINT}"
-
-if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${TARGET_SP}$"; then
-  remove_file_docker_aware "$TARGET_ONLY_DOWNLOAD_FILE"
-  if target_get_out="$(timed_object_get 20 object get --spEndpoint "$TARGET_SP_ENDPOINT" "$OBJECT_REL" "$TARGET_ONLY_DOWNLOAD_FILE")"; then
-    echo "$target_get_out"
-    echo "FAIL: object get unexpectedly succeeded via exited SP endpoint ${TARGET_SP_ENDPOINT}"
-    exit 1
-  fi
-  remove_file_docker_aware "$TARGET_ONLY_DOWNLOAD_FILE"
-  echo "  OK: exited SP endpoint no longer serves object downloads"
-else
-  echo "  INFO: target SP container ${TARGET_SP} is still running locally; chain removal is used as the exit-offline signal"
-fi
+echo "  OK: target SP is still present in the chain SP list because empty family blocks final exit"
 
 trap - EXIT
 cleanup
-echo "PASS: complete SP exit workflow succeeded"
+echo "PASS: empty-family blocker reproduced successfully"

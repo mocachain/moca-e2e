@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
 # E2E: manual object failover after the primary SP is forced to exit and its endpoint becomes unavailable.
+# shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 
 ENV="${1:-local}"
 _CONFIG_FILE="${2:-config/local.yaml}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=lib.sh
-source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=libs/core.sh
+source "$SCRIPT_DIR/libs/core.sh"
+# shellcheck source=libs/assertions.sh
+source "$SCRIPT_DIR/libs/assertions.sh"
+# shellcheck source=libs/moca_cmd.sh
+source "$SCRIPT_DIR/libs/moca_cmd.sh"
+# shellcheck source=libs/storage.sh
+source "$SCRIPT_DIR/libs/storage.sh"
+# shellcheck source=libs/sp.sh
+source "$SCRIPT_DIR/libs/sp.sh"
 
 if [ "$ENV" != "local" ]; then
   echo "SKIP: storage object failover test is local-only"

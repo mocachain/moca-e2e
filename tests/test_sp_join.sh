@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # E2E: verify deployed SPs (devcontainer test_join verification parity, no create-sp).
+# shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 
 ENV="${1:-local}"
 _CONFIG_FILE="${2:-config/local.yaml}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=lib.sh
-source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=libs/core.sh
+source "$SCRIPT_DIR/libs/core.sh"
+# shellcheck source=libs/moca_cmd.sh
+source "$SCRIPT_DIR/libs/moca_cmd.sh"
+# shellcheck source=libs/sp.sh
+source "$SCRIPT_DIR/libs/sp.sh"
 
 if [ "$ENV" = "mainnet" ]; then echo "SKIP: not safe for mainnet"; exit 0; fi
 if [ "$ENV" != "local" ]; then echo "SKIP: SP join test only on local"; exit 0; fi

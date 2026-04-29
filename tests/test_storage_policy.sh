@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 # E2E: policy CRUD on bucket/object/group (devcontainer policy_test parity).
 # Prefers moca-cmd GRN paths; falls back to mocad tx storage put-policy.
+# shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 
 ENV="${1:-local}"
 _CONFIG_FILE="${2:-config/local.yaml}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=lib.sh
-source "$SCRIPT_DIR/lib.sh"
+# shellcheck source=libs/core.sh
+source "$SCRIPT_DIR/libs/core.sh"
+# shellcheck source=libs/assertions.sh
+source "$SCRIPT_DIR/libs/assertions.sh"
+# shellcheck source=libs/moca_cmd.sh
+source "$SCRIPT_DIR/libs/moca_cmd.sh"
+# shellcheck source=libs/sp.sh
+source "$SCRIPT_DIR/libs/sp.sh"
 
 require_write_enabled "storage policy test"
 require_test_key

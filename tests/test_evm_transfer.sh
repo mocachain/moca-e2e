@@ -8,6 +8,8 @@ _CONFIG_FILE="${2:-config/local.yaml}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=libs/core.sh
 source "$SCRIPT_DIR/libs/core.sh"
+# shellcheck source=libs/assertions.sh
+source "$SCRIPT_DIR/libs/assertions.sh"
 
 require_write_enabled "EVM transfer test"
 require_test_key
@@ -53,10 +55,21 @@ echo "  Recipient balance before: $BALANCE_BEFORE"
 
 # Send 0.001 MOCA (1e15 wei) — small to preserve funds
 echo "  Sending via cast..."
-cast send "$RECIPIENT" --value "10000000000000000" \
+SEND_OUT=$(cast send "$RECIPIENT" --value "10000000000000000" \
   --private-key "0x${PRIVKEY}" --rpc-url "$EVM_RPC" \
-  --chain-id "$EVM_CHAIN_ID" 2>&1 | tail -1 || echo "  cast send may have failed"
-sleep 5
+  --chain-id "$EVM_CHAIN_ID" --json 2>&1) || {
+  echo "  FAIL: cast send broadcast failed: $SEND_OUT"
+  exit 1
+}
+TX_HASH=$(echo "$SEND_OUT" | jq -r '.transactionHash // empty' 2>/dev/null)
+if [ -z "$TX_HASH" ]; then
+  echo "  FAIL: cast send returned no tx hash: $SEND_OUT"
+  exit 1
+fi
+wait_for_evm_tx "$TX_HASH" 10 || {
+  echo "  FAIL: tx $TX_HASH not mined within 10s"
+  exit 1
+}
 
 # Check balance after
 BALANCE_AFTER=$(curl -sf "$EVM_RPC" -X POST -H "Content-Type: application/json" \

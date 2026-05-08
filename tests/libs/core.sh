@@ -70,8 +70,10 @@ exec_mocad() {
 # --- Query helpers ---
 get_balance() {
   local addr="$1"
+  # Wrap the pipeline so `// "0"` fires when .balances is empty (no entries
+  # for DENOM). Without the parens, the default only fires on null .amount.
   curl -sf "${REST}/cosmos/bank/v1beta1/balances/${addr}" | \
-    jq -r ".balances[] | select(.denom==\"${DENOM}\") | .amount // \"0\"" 2>/dev/null || echo "0"
+    jq -r "(.balances[]? | select(.denom==\"${DENOM}\") | .amount) // \"0\"" 2>/dev/null || echo "0"
 }
 
 get_block_height() {
@@ -125,16 +127,82 @@ require_test_key() {
 }
 
 # --- Transaction helpers ---
+# cosmos_tx: broadcast a Cosmos tx in sync mode and wait for on-chain inclusion.
+# Returns 0 only if the tx was included with code=0. Returns 1 on broadcast
+# failure or non-zero on-chain code.
+#
+# Inlines docker-vs-local detection so mocad's stderr reaches our 2>&1 capture
+# (exec_mocad always silences stderr, which would hide real broadcast errors).
 cosmos_tx() {
-  exec_mocad tx "$@" \
-    --keyring-backend test \
-    --chain-id "$CHAIN_ID" \
-    --node "$TM_RPC" \
-    --fees "$FEES" \
-    -y 2>/dev/null
-  sleep 3
+  local out hash
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${VALIDATOR_CONTAINER}$"; then
+    out=$(docker exec "$VALIDATOR_CONTAINER" mocad tx "$@" \
+      --home /root/.mocad \
+      --keyring-backend test \
+      --chain-id "$CHAIN_ID" \
+      --node "$TM_RPC" \
+      --fees "$FEES" \
+      --broadcast-mode sync -y --output json 2>&1) || {
+      echo "  cosmos_tx broadcast failed: $out" >&2
+      return 1
+    }
+  elif command -v mocad >/dev/null 2>&1; then
+    local extra_args=()
+    [ -n "${MOCAD_HOME:-}" ] && extra_args+=(--home "$MOCAD_HOME")
+    [ "${ENV:-local}" != "local" ] && [ -n "${EVM_RPC:-}" ] && extra_args+=(--evm-node "$EVM_RPC")
+    out=$(mocad tx "$@" \
+      "${extra_args[@]}" \
+      --keyring-backend test \
+      --chain-id "$CHAIN_ID" \
+      --node "$TM_RPC" \
+      --fees "$FEES" \
+      --broadcast-mode sync -y --output json 2>&1) || {
+      echo "  cosmos_tx broadcast failed: $out" >&2
+      return 1
+    }
+  else
+    echo "ERROR: mocad not found (no ${VALIDATOR_CONTAINER} container and no local mocad on PATH)" >&2
+    return 127
+  fi
+  hash=$(echo "$out" | jq -r '.txhash // empty' 2>/dev/null)
+  if [ -z "$hash" ]; then
+    echo "  cosmos_tx returned no txhash: $out" >&2
+    return 1
+  fi
+  wait_for_cosmos_tx "$hash"
 }
 
+# wait_for_cosmos_tx: poll `mocad query tx <hash>` until inclusion or timeout.
+# Returns 0 if tx was included with code=0, 1 on non-zero on-chain code or
+# timeout. Block time is ~1s on devnet/local, so 15s default covers ~15 blocks.
+#
+# Usage: wait_for_cosmos_tx <txhash> [timeout_seconds=15]
+wait_for_cosmos_tx() {
+  local hash="${1:-}" timeout="${2:-15}"
+  [ -z "$hash" ] && { echo "  wait_for_cosmos_tx: empty hash" >&2; return 1; }
+
+  local out code raw deadline now
+  deadline=$(( $(date +%s) + timeout ))
+  while :; do
+    out=$(exec_mocad query tx "$hash" --node "$TM_RPC" --output json 2>/dev/null) || true
+    code=$(echo "$out" | jq -r '.code // empty' 2>/dev/null)
+    if [ -n "$code" ]; then
+      if [ "$code" = "0" ]; then return 0; fi
+      raw=$(echo "$out" | jq -r '.raw_log // empty' 2>/dev/null)
+      echo "  cosmos tx $hash failed on-chain: code=$code log=$raw" >&2
+      return 1
+    fi
+    now=$(date +%s); [ "$now" -ge "$deadline" ] && break
+    sleep 1
+  done
+  echo "  cosmos tx $hash not included within ${timeout}s" >&2
+  return 1
+}
+
+# wait_for_tx: legacy sleep-based wait. DEPRECATED — use wait_for_cosmos_tx
+# (with a captured txhash) for new code. Kept for backward-compat with the
+# many existing tests that call `wait_for_tx <seconds>` after a bare mocad
+# tx broadcast that doesn't return a hash.
 wait_for_tx() {
   local seconds="${1:-5}"
   sleep "$seconds"

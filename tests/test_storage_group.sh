@@ -16,9 +16,15 @@ require_test_key
 
 OWNER_ADDR=$(exec_mocad keys show "$TEST_KEY" -a --keyring-backend test 2>/dev/null || echo "")
 MEMBER_ADDR=$(exec_mocad keys show "$SENDER_KEY" -a --keyring-backend test 2>/dev/null || echo "")
+OWNER_PRIVKEY=$(get_key_private_key "$TEST_KEY")
 
 if [ -z "$OWNER_ADDR" ]; then
   echo "SKIP: testaccount not found in validator keyring"
+  exit 0
+fi
+
+if [ -z "$OWNER_PRIVKEY" ]; then
+  echo "SKIP: testaccount private key not found in validator keyring"
   exit 0
 fi
 
@@ -32,46 +38,69 @@ run_mocad_group_smoke() {
   echo "  Creating group..."
   local create_result
   create_result=$(exec_mocad tx storage create-group "$group_name" \
-    --from "$TEST_KEY" \
-    --keyring-backend test \
+    --privatekey "$OWNER_PRIVKEY" \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
     --fees "$FEES" \
-    -y 2>/dev/null || echo "FAILED")
+    -y || echo "FAILED")
 
   if echo "$create_result" | grep -q "FAILED\|Error\|error"; then
     echo "FAIL: group creation failed on mocad path (group does not need SP; this is a real error)"
     echo "$create_result" | tail -5
     exit 1
   fi
-  wait_for_tx 5
+  local group_id=""
+  local deadline=$(( $(date +%s) + 20 ))
+  while :; do
+    group_id=$(exec_mocad query storage head-group "$OWNER_ADDR" "$group_name" \
+      --node "$TM_RPC" --output json 2>/dev/null | jq -r '.group_info.id // empty' || true)
+    [ -n "$group_id" ] && break
+    [ "$(date +%s)" -ge "$deadline" ] && break
+    sleep 1
+  done
 
   echo "  Querying group..."
-  exec_mocad query storage head-group "$OWNER_ADDR" "$group_name" \
-    --node "$TM_RPC" --output json 2>/dev/null | jq -r '.group_info.id // empty' || true
+  printf '%s\n' "$group_id"
+  [ -n "$group_id" ] || { echo "FAIL: created group was not queryable"; exit 1; }
 
   if [ -n "$MEMBER_ADDR" ]; then
     echo "  Adding member..."
-    exec_mocad tx storage update-group-member "$group_name" \
-      --add-members "$MEMBER_ADDR" \
-      --from "$TEST_KEY" \
-      --keyring-backend test \
+    local add_result
+    add_result=$(exec_mocad tx storage update-group-member "$group_name" "$MEMBER_ADDR" 0 "" \
+      --privatekey "$OWNER_PRIVKEY" \
       --chain-id "$CHAIN_ID" \
       --node "$TM_RPC" \
       --fees "$FEES" \
-      -y 2>/dev/null || true
-    wait_for_tx 3
+      -y || true)
+    if echo "$add_result" | grep -q "FAILED\|Error\|error"; then
+      echo "FAIL: add member failed"
+      echo "$add_result" | tail -5
+      exit 1
+    fi
   fi
 
   echo "  Deleting group..."
-  exec_mocad tx storage delete-group "$group_name" \
-    --from "$TEST_KEY" \
-    --keyring-backend test \
+  local delete_result
+  delete_result=$(exec_mocad tx storage delete-group "$group_name" \
+    --privatekey "$OWNER_PRIVKEY" \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
     --fees "$FEES" \
-    -y 2>/dev/null || true
-  wait_for_tx 3
+    -y || true)
+  if echo "$delete_result" | grep -q "FAILED\|Error\|error"; then
+    echo "FAIL: delete group failed"
+    echo "$delete_result" | tail -5
+    exit 1
+  fi
+  deadline=$(( $(date +%s) + 20 ))
+  while :; do
+    group_id=$(exec_mocad query storage head-group "$OWNER_ADDR" "$group_name" \
+      --node "$TM_RPC" --output json 2>/dev/null | jq -r '.group_info.id // empty' || true)
+    [ -z "$group_id" ] && break
+    [ "$(date +%s)" -ge "$deadline" ] && break
+    sleep 1
+  done
+  [ -z "$group_id" ] || { echo "FAIL: deleted group still queryable"; exit 1; }
   echo "PASS: storage group operations tested (mocad path)"
 }
 

@@ -1,83 +1,66 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Builds Docker images for all components from cloned repos.
-# The cloned repos should be in ./build/ (placed there by clone-repos.sh).
+# Pulls prebuilt Docker images for all components referenced by the topology.
 
 ENV="${1:-local}"
+TOPOLOGY="${2:-topology/default.yaml}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-BUILD_DIR="$ROOT_DIR/build"
-ARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
 
-# Pass GITHUB_TOKEN for private dependency resolution in Docker builds
-TOKEN_ARG=""
-if [ -n "${GH_TOKEN:-}" ]; then
-  TOKEN_ARG="--build-arg GITHUB_TOKEN=${GH_TOKEN}"
-elif [ -n "${GITHUB_TOKEN:-}" ]; then
-  TOKEN_ARG="--build-arg GITHUB_TOKEN=${GITHUB_TOKEN}"
-fi
-
-echo "=== Building Docker images (arch: $ARCH) ==="
-
-# Verify repos are cloned
-if [ ! -d "$BUILD_DIR/moca" ]; then
-  echo "Error: moca repo not cloned at $BUILD_DIR/moca"
-  echo "Run: make clone"
+if ! command -v yq &>/dev/null; then
+  echo "Error: yq is required. Install: brew install yq"
   exit 1
 fi
 
-# --- Build mocad image (plain docker) ---
-echo "--- Building mocad image ---"
-docker build \
-  -t mocad-local:latest \
-  -f "$ROOT_DIR/docker/Dockerfile.mocad" \
-  --build-arg TARGETARCH="$ARCH" \
-  $TOKEN_ARG \
-  "$ROOT_DIR"
+echo "=== Pulling Docker images ==="
 
-# --- Build cosmovisor image ---
-echo "--- Building cosmovisor image ---"
-docker build \
-  -t mocad-cosmovisor:latest \
-  -f "$ROOT_DIR/docker/Dockerfile.cosmovisor" \
-  --build-arg TARGETARCH="$ARCH" \
-  $TOKEN_ARG \
-  "$ROOT_DIR"
+pull_image() {
+  local image="$1"
+  local attempt=1
+  local max_attempts="${DOCKER_PULL_RETRIES:-3}"
 
-# --- Build SP image (if cloned) ---
-if [ -d "$BUILD_DIR/moca-storage-provider" ]; then
-  echo "--- Building storage provider image ---"
-  docker build \
-    -t moca-sp-local:latest \
-    -f "$ROOT_DIR/docker/Dockerfile.sp" \
-    --build-arg TARGETARCH="$ARCH" \
-    $TOKEN_ARG \
-    "$ROOT_DIR"
-else
-  echo "Warning: moca-storage-provider not cloned, skipping SP image build"
+  while [ "$attempt" -le "$max_attempts" ]; do
+    if docker pull "$image"; then
+      return 0
+    fi
+    if [ "$attempt" -eq "$max_attempts" ]; then
+      break
+    fi
+    echo "WARN: docker pull failed for $image; retrying ($attempt/$max_attempts)..."
+    sleep $((attempt * 5))
+    attempt=$((attempt + 1))
+  done
+
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    echo "WARN: using existing local image for $image after pull failures"
+    return 0
+  fi
+
+  echo "Error: failed to pull $image and no local copy is available"
+  return 1
+}
+
+images="$(
+  {
+    yq -r '.images.genesis_init // .images.validator // ""' "$TOPOLOGY"
+    yq -r '.images.validator // ""' "$TOPOLOGY"
+    yq -r '.images.cosmovisor // ""' "$TOPOLOGY"
+    yq -r '.images.storage_provider // ""' "$TOPOLOGY"
+    yq -r '.images.moca_cmd // ""' "$TOPOLOGY"
+    yq -r '.services.mysql.image // ""' "$TOPOLOGY"
+  } | sed '/^null$/d;/^$/d' | sort -u
+)"
+
+if [ -z "$images" ]; then
+  echo "Error: no images configured in $TOPOLOGY"
+  exit 1
 fi
 
-# --- Build init image (reuses mocad-local as base) ---
-echo "--- Building genesis-init image ---"
-docker build \
-  -t moca-genesis-init:latest \
-  -f "$ROOT_DIR/docker/Dockerfile.init" \
-  "$ROOT_DIR"
-
-# --- Build moca-cmd image (if cloned) ---
-if [ -d "$BUILD_DIR/moca-cmd" ]; then
-  echo "--- Building moca-cmd image ---"
-  docker build \
-    -t moca-cmd-local:latest \
-    -f "$ROOT_DIR/docker/Dockerfile.moca-cmd" \
-    --build-arg TARGETARCH="$ARCH" \
-    $TOKEN_ARG \
-    "$ROOT_DIR"
-else
-  echo "Warning: moca-cmd not cloned, skipping moca-cmd image build"
-fi
+for image in $images; do
+  echo "--- Pulling $image"
+  pull_image "$image"
+done
 
 echo ""
-echo "=== All images built ==="
-docker images | grep -E "(mocad-local|mocad-cosmovisor|moca-sp-local|moca-genesis-init|moca-cmd-local)" || true
+echo "=== All images pulled ==="

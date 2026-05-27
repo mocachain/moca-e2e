@@ -27,8 +27,10 @@ echo "  Sender balance before: $SENDER_BEFORE $DENOM"
 # Send 1 MOCA (1e18 amoca)
 SEND_AMOUNT="1000000000000000000"
 echo "  Sending ${SEND_AMOUNT} ${DENOM}..."
-cosmos_tx bank send "$TEST_KEY" "$RECEIVER" "${SEND_AMOUNT}${DENOM}" --from "$TEST_KEY"
-wait_for_tx 5
+tx_out="$(cosmos_tx bank send "$TEST_KEY" "$RECEIVER" "${SEND_AMOUNT}${DENOM}" --from "$TEST_KEY")"
+tx_hash="$(printf '%s\n' "$tx_out" | sed -n 's/^txhash:[[:space:]]*//p' | tail -1)"
+[ -n "$tx_hash" ] || { echo "$tx_out"; echo "FAIL: could not parse tx hash"; exit 1; }
+wait_for_tx "$tx_hash" 20 || { echo "$tx_out"; echo "FAIL: tx $tx_hash was not found before timeout"; exit 1; }
 
 # Query balances after
 SENDER_AFTER=$(get_balance "$SENDER")

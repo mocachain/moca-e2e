@@ -9,6 +9,13 @@ TESTS_DIR="$ROOT_DIR/tests"
 
 echo "=== E2E Test Suite: $ENV ==="
 
+if [ "$ENV" = "local" ]; then
+  [ -n "${RPC_BASE_OVERRIDE:-}" ] && export RPC="http://localhost:${RPC_BASE_OVERRIDE}"
+  [ -n "${REST_BASE_OVERRIDE:-}" ] && export REST="http://localhost:${REST_BASE_OVERRIDE}"
+  [ -n "${EVM_RPC_BASE_OVERRIDE:-}" ] && export EVM_RPC="http://localhost:${EVM_RPC_BASE_OVERRIDE}"
+  [ -n "${GRPC_BASE_OVERRIDE:-}" ] && export GRPC_ENDPOINT="localhost:${GRPC_BASE_OVERRIDE}"
+fi
+
 # Export per-environment endpoints for all test scripts.
 if [ -f "$CONFIG_FILE" ]; then
   CHAIN_ID_VALUE="$(yq -r '.chain.chain_id // ""' "$CONFIG_FILE" 2>/dev/null || true)"
@@ -17,9 +24,9 @@ if [ -f "$CONFIG_FILE" ]; then
   EVM_RPC_VALUE="$(yq -r '.chain.evm_rpc // ""' "$CONFIG_FILE" 2>/dev/null || true)"
 
   [ -n "$CHAIN_ID_VALUE" ] && [ "$CHAIN_ID_VALUE" != "null" ] && export CHAIN_ID="$CHAIN_ID_VALUE"
-  [ -n "$RPC_VALUE" ] && [ "$RPC_VALUE" != "null" ] && export RPC="$RPC_VALUE"
-  [ -n "$REST_VALUE" ] && [ "$REST_VALUE" != "null" ] && export REST="$REST_VALUE"
-  [ -n "$EVM_RPC_VALUE" ] && [ "$EVM_RPC_VALUE" != "null" ] && export EVM_RPC="$EVM_RPC_VALUE"
+  [ -z "${RPC:-}" ] && [ -n "$RPC_VALUE" ] && [ "$RPC_VALUE" != "null" ] && export RPC="$RPC_VALUE"
+  [ -z "${REST:-}" ] && [ -n "$REST_VALUE" ] && [ "$REST_VALUE" != "null" ] && export REST="$REST_VALUE"
+  [ -z "${EVM_RPC:-}" ] && [ -n "$EVM_RPC_VALUE" ] && [ "$EVM_RPC_VALUE" != "null" ] && export EVM_RPC="$EVM_RPC_VALUE"
 fi
 
 echo "  CHAIN_ID=${CHAIN_ID:-<default>}"

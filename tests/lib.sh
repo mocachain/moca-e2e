@@ -26,6 +26,12 @@ if [[ "$TM_RPC" == http://* ]]; then
   TM_RPC="tcp://${TM_RPC#http://}"
 fi
 
+# When mocad commands run inside the local validator container, they should
+# talk to the node's in-container RPC listener rather than the host-mapped port.
+if [ "${ENV:-local}" = "local" ]; then
+  TM_RPC="${TM_RPC_LOCAL:-tcp://127.0.0.1:26657}"
+fi
+
 # --- Runtime policy helpers ---
 writes_allowed() {
   [ "${ENV:-local}" = "local" ] || [ "${ALLOW_WRITES:-0}" = "1" ] || [ "${E2E_ALLOW_WRITES:-0}" = "1" ]
@@ -101,6 +107,21 @@ get_key_address() {
   exec_mocad keys show "$key" -a --keyring-backend test 2>/dev/null || echo ""
 }
 
+get_key_private_key() {
+  local key="$1"
+  exec_mocad keys unsafe-export-eth-key "$key" --keyring-backend test 2>/dev/null || echo ""
+}
+
+get_account_sequence() {
+  local addr="$1"
+  exec_mocad query auth account "$addr" --node "$TM_RPC" --output json 2>/dev/null | \
+    jq -r '.account.value.base_account.sequence // .account.base_account.sequence // empty' 2>/dev/null
+}
+
+get_tx_code() {
+  printf '%s\n' "${1:-}" | sed -n 's/^code:[[:space:]]*//p' | tail -1
+}
+
 require_test_key() {
   if [ -z "$TEST_KEY" ]; then
     echo "SKIP: no test key configured (set DEVNET_TEST_KEY=<keyname> for devnet)"
@@ -126,18 +147,76 @@ require_test_key() {
 
 # --- Transaction helpers ---
 cosmos_tx() {
-  exec_mocad tx "$@" \
-    --keyring-backend test \
-    --chain-id "$CHAIN_ID" \
-    --node "$TM_RPC" \
-    --fees "$FEES" \
-    -y 2>/dev/null
-  sleep 3
+  local from="" addr="" seq="" output="" retry="" code=""
+  local args=("$@")
+  local i=0
+  local attempt=1
+
+  while [ $i -lt ${#args[@]} ]; do
+    if [ "${args[$i]}" = "--from" ] && [ $((i + 1)) -lt ${#args[@]} ]; then
+      from="${args[$((i + 1))]}"
+      break
+    fi
+    i=$((i + 1))
+  done
+
+  if [ -n "$from" ]; then
+    addr="$(get_key_address "$from")"
+    if [ -n "$addr" ]; then
+      seq="$(get_account_sequence "$addr")"
+    fi
+  fi
+
+  while [ "$attempt" -le 5 ]; do
+    output="$(exec_mocad tx "${args[@]}" \
+      --keyring-backend test \
+      --chain-id "$CHAIN_ID" \
+      --node "$TM_RPC" \
+      --fees "$FEES" \
+      ${seq:+--sequence "$seq"} \
+      -y)"
+    code="$(get_tx_code "$output")"
+    if [ "${code:-0}" = "0" ] || [ -z "$addr" ]; then
+      break
+    fi
+    if ! printf '%s\n' "$output" | grep -q "account sequence mismatch"; then
+      break
+    fi
+    retry="$(printf '%s\n' "$output" | sed -n "s/.*expected \([0-9][0-9]*\), got [0-9][0-9]*.*/\1/p" | tail -1)"
+    seq="${retry:-$(get_account_sequence "$addr")}"
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+
+  printf '%s\n' "$output"
 }
 
 wait_for_tx() {
-  local seconds="${1:-5}"
-  sleep "$seconds"
+  local txhash="${1:-}"
+  local timeout="${2:-20}"
+  local deadline now
+
+  if [ -z "$txhash" ]; then
+    sleep "${timeout:-5}"
+    return 0
+  fi
+
+  if [ -z "${2:-}" ] && [[ "$txhash" =~ ^[0-9]+$ ]]; then
+    sleep "$txhash"
+    return 0
+  fi
+
+  deadline=$(( $(date +%s) + timeout ))
+  while :; do
+    if exec_mocad query tx "$txhash" --node "$TM_RPC" --output json >/dev/null 2>&1; then
+      return 0
+    fi
+    now=$(date +%s)
+    if [ "$now" -ge "$deadline" ]; then
+      return 1
+    fi
+    sleep 1
+  done
 }
 
 # _evm_rpc: one-shot JSON-RPC call. Prints .result as JSON (or empty on error).

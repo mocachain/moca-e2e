@@ -19,16 +19,21 @@ echo "=== Generating docker-compose from $TOPOLOGY ==="
 # Read chain config
 CHAIN_ID=$(yq '.chain.chain_id' "$TOPOLOGY")
 DENOM=$(yq '.chain.denom' "$TOPOLOGY")
+GENESIS_INIT_IMAGE=$(yq -r '.images.genesis_init // .images.validator' "$TOPOLOGY")
+VALIDATOR_IMAGE=$(yq -r '.images.validator' "$TOPOLOGY")
+COSMOVISOR_IMAGE=$(yq -r '.images.cosmovisor // .images.validator' "$TOPOLOGY")
+SP_IMAGE=$(yq -r '.images.storage_provider' "$TOPOLOGY")
+MOCA_CMD_IMAGE=$(yq -r '.images.moca_cmd // ""' "$TOPOLOGY")
 
 # Read port bases
-RPC_BASE=$(yq '.ports.rpc_base' "$TOPOLOGY")
-GRPC_BASE=$(yq '.ports.grpc_base' "$TOPOLOGY")
-REST_BASE=$(yq '.ports.rest_base' "$TOPOLOGY")
-EVM_RPC_BASE=$(yq '.ports.evm_rpc_base' "$TOPOLOGY")
-EVM_WS_BASE=$(yq '.ports.evm_ws_base' "$TOPOLOGY")
-P2P_BASE=$(yq '.ports.p2p_base' "$TOPOLOGY")
-SP_GW_BASE=$(yq '.ports.sp_gateway_base' "$TOPOLOGY")
-SP_P2P_BASE=$(yq '.ports.sp_p2p_base' "$TOPOLOGY")
+RPC_BASE="${RPC_BASE_OVERRIDE:-$(yq '.ports.rpc_base' "$TOPOLOGY")}"
+GRPC_BASE="${GRPC_BASE_OVERRIDE:-$(yq '.ports.grpc_base' "$TOPOLOGY")}"
+REST_BASE="${REST_BASE_OVERRIDE:-$(yq '.ports.rest_base' "$TOPOLOGY")}"
+EVM_RPC_BASE="${EVM_RPC_BASE_OVERRIDE:-$(yq '.ports.evm_rpc_base' "$TOPOLOGY")}"
+EVM_WS_BASE="${EVM_WS_BASE_OVERRIDE:-$(yq '.ports.evm_ws_base' "$TOPOLOGY")}"
+P2P_BASE="${P2P_BASE_OVERRIDE:-$(yq '.ports.p2p_base' "$TOPOLOGY")}"
+SP_GW_BASE="${SP_GW_BASE_OVERRIDE:-$(yq '.ports.sp_gateway_base' "$TOPOLOGY")}"
+SP_P2P_BASE="${SP_P2P_BASE_OVERRIDE:-$(yq '.ports.sp_p2p_base' "$TOPOLOGY")}"
 
 # Count validators and SPs
 NUM_VALIDATORS=$(yq '.validators | length' "$TOPOLOGY")
@@ -51,12 +56,10 @@ services:
 
   # === Genesis init (runs once, exits) ===
   genesis-init:
-    image: moca-genesis-init:latest
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.init
+    image: ${GENESIS_INIT_IMAGE}
     volumes:
       - shared-init:/output
+      - ${ROOT_DIR}/scripts/init-genesis.sh:/init-genesis.sh:ro
     environment:
       - CHAIN_ID=${CHAIN_ID}
       - DENOM=${DENOM}
@@ -73,6 +76,7 @@ $(for key in genesis_account_balance staking_bond_amount sp_min_deposit gov_min_
 done)
     networks:
       - moca-e2e
+    entrypoint: ["/bin/bash", "/init-genesis.sh"]
 
   # === MySQL (for storage providers) ===
   mysql:
@@ -100,8 +104,8 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
 
   # Select Dockerfile + image tag based on mode
   case "$MODE" in
-    cosmovisor) DOCKERFILE="docker/Dockerfile.cosmovisor"; VALIDATOR_IMAGE="mocad-cosmovisor:latest" ;;
-    *)          DOCKERFILE="docker/Dockerfile.mocad";      VALIDATOR_IMAGE="mocad-local:latest" ;;
+    cosmovisor) VALIDATOR_SERVICE_IMAGE="${COSMOVISOR_IMAGE}" ;;
+    *)          VALIDATOR_SERVICE_IMAGE="${VALIDATOR_IMAGE}" ;;
   esac
 
   RPC_PORT=$((RPC_BASE + i))
@@ -114,13 +118,11 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
   cat >> "$OUTPUT" <<VALIDATOR
   # === Validator $i ($MODE) ===
   ${NAME}:
-    image: ${VALIDATOR_IMAGE}
-    build:
-      context: .
-      dockerfile: ${DOCKERFILE}
+    image: ${VALIDATOR_SERVICE_IMAGE}
     container_name: ${NAME}
     volumes:
       - shared-init:/shared:ro
+      - ${ROOT_DIR}/docker/entrypoint-validator.sh:/entrypoint-validator.sh:ro
     environment:
       - VALIDATOR_NAME=${NAME}
       - DENOM=${DENOM}
@@ -144,6 +146,7 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
     restart: on-failure
     networks:
       - moca-e2e
+    entrypoint: ["/bin/bash", "/entrypoint-validator.sh"]
 
 VALIDATOR
 done
@@ -157,13 +160,11 @@ for i in $(seq 0 $((NUM_SPS - 1))); do
   cat >> "$OUTPUT" <<SP
   # === Storage Provider $i ===
   ${NAME}:
-    image: moca-sp-local:latest
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.sp
+    image: ${SP_IMAGE}
     container_name: ${NAME}
     volumes:
       - shared-init:/shared:ro
+      - ${ROOT_DIR}/docker/entrypoint-sp.sh:/entrypoint-sp.sh:ro
     environment:
       - SP_NAME=${NAME}
       - MYSQL_HOST=mysql
@@ -183,7 +184,7 @@ for i in $(seq 0 $((NUM_SPS - 1))); do
       validator-0:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9402/-/ready"]
+      test: ["CMD-SHELL", "bash -lc 'exec 3<>/dev/tcp/127.0.0.1/9402'"]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -191,20 +192,16 @@ for i in $(seq 0 $((NUM_SPS - 1))); do
     restart: on-failure
     networks:
       - moca-e2e
+    entrypoint: ["/bin/bash", "/entrypoint-sp.sh"]
 
 SP
 done
 
-# === moca-cmd sidecar ===
-# Always emitted: tests exec into this container to drive storage/SP write flows.
-# Idles until `docker exec moca-cmd moca-cmd ...` is invoked.
+if [ -n "$MOCA_CMD_IMAGE" ] && [ "$MOCA_CMD_IMAGE" != "null" ]; then
 cat >> "$OUTPUT" <<MOCACMD
   # === moca-cmd CLI sidecar ===
   moca-cmd:
-    image: moca-cmd-local:latest
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.moca-cmd
+    image: ${MOCA_CMD_IMAGE}
     container_name: moca-cmd
     environment:
       - RPC_HOST=validator-0
@@ -229,9 +226,12 @@ cat >> "$OUTPUT" <<MOCACMD
       - moca-e2e
 
 MOCACMD
+  echo "  moca-cmd: enabled (sidecar)"
+else
+  echo "  moca-cmd: disabled (no image configured)"
+fi
 
 echo "=== Generated $OUTPUT ==="
 echo "  Validators: $NUM_VALIDATORS"
 echo "  Storage Providers: $NUM_SPS"
-echo "  moca-cmd: enabled (sidecar)"
 echo "  Chain ID: $CHAIN_ID"

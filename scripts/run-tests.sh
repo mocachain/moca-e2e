@@ -4,7 +4,7 @@ set -euo pipefail
 # Main entry point for E2E tests.
 # Usage: ./run-tests.sh [env] [stack-file] [topology]
 #
-# For local: spins up docker-compose, runs tests, tears down
+# For local: generates docker-compose from image refs, runs tests, tears down
 # For remote: runs tests against live endpoints
 
 ENV="${1:-local}"
@@ -26,29 +26,39 @@ echo "  Topology: $TOPOLOGY"
 echo ""
 
 TEST_EXIT=0
+SHOULD_TEARDOWN=false
+
+cleanup() {
+  if [ "$SHOULD_TEARDOWN" = "true" ] && [ "${SKIP_TEARDOWN:-}" != "true" ]; then
+    "$SCRIPT_DIR/teardown.sh" local || true
+  fi
+}
 
 if [ "$ENV" = "local" ]; then
   # --- Local: full docker-compose lifecycle ---
+  SHOULD_TEARDOWN=true
+  trap cleanup EXIT
 
-  # 1. Clone repos at stack.yaml refs
-  "$SCRIPT_DIR/clone-repos.sh" "$STACK_FILE"
+  # Clean up any prior interrupted local run before binding ports again.
+  "$SCRIPT_DIR/teardown.sh" local
 
-  # 2. Generate docker-compose from topology
+  # 1. Generate docker-compose from topology
   COMPOSE_FILE="$ROOT_DIR/docker-compose.generated.yml"
   "$SCRIPT_DIR/generate-compose.sh" "$TOPOLOGY" "$COMPOSE_FILE"
 
-  # 3. Build images and start
+  # 2. Start services from prebuilt images
   "$SCRIPT_DIR/setup-env.sh" local "$STACK_FILE" "$TOPOLOGY"
 
-  # 4. Wait for chain
-  "$SCRIPT_DIR/wait-for-chain.sh" "http://localhost:26657" 5 120
+  # 3. Wait for chain
+  RPC_PORT="${RPC_BASE_OVERRIDE:-26657}"
+  "$SCRIPT_DIR/wait-for-chain.sh" "http://localhost:${RPC_PORT}" 5 120
 
-  # 5. Run tests
+  # 4. Run tests
   echo ""
   echo "=== Running E2E test suite ==="
   "$SCRIPT_DIR/run-suite.sh" "$ENV" "$CONFIG_FILE" || TEST_EXIT=$?
 
-  # 6. Collect logs on failure (kept for debugging)
+  # 5. Collect logs on failure (kept for debugging)
   if [ $TEST_EXIT -ne 0 ]; then
     echo ""
     echo "=== Collecting logs ==="
@@ -56,10 +66,9 @@ if [ "$ENV" = "local" ]; then
     docker compose -f "$COMPOSE_FILE" logs > "$ROOT_DIR/test-results/logs/all.log" 2>&1 || true
   fi
 
-  # 8. Teardown (unless SKIP_TEARDOWN is set)
-  if [ "${SKIP_TEARDOWN:-}" != "true" ]; then
-    "$SCRIPT_DIR/teardown.sh" local
-  fi
+  # 6. Teardown (unless SKIP_TEARDOWN is set)
+  cleanup
+  SHOULD_TEARDOWN=false
 
 else
   # --- Remote: just run tests against live endpoints ---

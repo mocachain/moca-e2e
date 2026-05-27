@@ -2,13 +2,13 @@
 
 [![E2E Status](https://github.com/mocachain/moca-e2e/actions/workflows/test-stack.yml/badge.svg?branch=main)](https://github.com/mocachain/moca-e2e/actions/workflows/test-stack.yml)
 
-Cross-repo integration testing hub for the Moca ecosystem. Ensures all components work together by maintaining a **known-good stack pointer** — a tested combination of commit SHAs across all repos.
+Cross-repo integration testing hub for the Moca ecosystem. Ensures all components work together by maintaining a **known-good stack pointer** and running the stack from prebuilt container images.
 
 ## How it works
 
 1. When any Moca repo merges to `main`, it fires a `repository_dispatch` to this hub
-2. The hub updates `stack.yaml` with the new SHA and force-pushes a rolling branch
-3. CI runs the full E2E test suite on **both AMD64 and ARM64**
+2. The hub updates the tested stack metadata
+3. CI pulls the declared images and runs the full E2E test suite on **both AMD64 and ARM64**
 4. If tests pass, the rolling PR auto-merges — advancing the known-good pointer
 5. If tests fail, the team is notified and the pointer stays at the last known-good state
 
@@ -50,8 +50,8 @@ make up                # Start services without running tests
 make down              # Stop services
 make logs              # Follow service logs
 make ps                # Show running services
-make clone             # Clone repos at stack.yaml refs
-make build             # Build Docker images
+make clone             # No-op in image mode
+make build             # Pull Docker images declared by the topology
 make validate-stack    # Verify all stack.yaml refs exist
 ```
 
@@ -132,7 +132,7 @@ Source repo merges to main
 | `test_sp_exit` | SP — target SP acts as both primary and secondary, waits for GVG counts to drain, then verifies final SP removal from chain |
 | `test_sp_delete` | SP — governance delete pre-checks only (no destructive tx by default) |
 
-`tests/lib.sh` exposes `resolve_moca_cmd` / `exec_moca_cmd` for optional `moca-cmd` in Docker (`moca-cmd` container) or on `PATH`.
+`tests/lib.sh` exposes `resolve_moca_cmd` / `exec_moca_cmd` for optional `moca-cmd` in Docker (`moca-cmd` container) or on `PATH`. If no `moca-cmd` image is configured, related tests fall back or skip.
 
 ## Repository structure
 
@@ -148,11 +148,7 @@ Source repo merges to main
 │   ├── minimal.yaml           # 1 validator, 1 SP (fast smoke)
 │   └── stress.yaml            # 6 validators (all modes), 6 SPs
 ├── docker/
-│   ├── Dockerfile.mocad       # Plain mocad image
-│   ├── Dockerfile.cosmovisor  # Cosmovisor + mocad image
-│   ├── Dockerfile.sp          # Storage provider image
-│   ├── Dockerfile.init        # Genesis init image
-│   └── entrypoint-*.sh        # Per-mode entrypoints
+│   └── entrypoint-*.sh        # Runtime entrypoints expected by prebuilt images
 ├── config/                    # Per-environment endpoint configs
 ├── scripts/
 │   ├── generate-compose.sh    # Topology → docker-compose.generated.yml
@@ -161,7 +157,7 @@ Source repo merges to main
 │   └── ...                    # clone, build, setup, teardown, wait
 ├── tests/                     # E2E test suites + lib.sh helpers
 ├── notify-template/           # Drop-in workflow for source repos
-├── stack.yaml                 # Known-good stack pointer
+├── stack.yaml                 # Known-good stack pointer / image metadata input
 └── Makefile                   # Local-first entry point
 ```
 

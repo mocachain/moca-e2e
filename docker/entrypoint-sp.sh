@@ -3,7 +3,7 @@ set -euo pipefail
 
 SP_NAME="${SP_NAME:?SP_NAME required}"
 SHARED_DIR="${SHARED_DIR:-/shared}"
-SP_HOME="${SP_HOME:-/root/.moca-sp}"
+SP_HOME="${SP_HOME:-/app/.moca-sp}"
 MYSQL_HOST="${MYSQL_HOST:-mysql}"
 MYSQL_PORT="${MYSQL_PORT:-3306}"
 MYSQL_USER="${MYSQL_USER:-root}"
@@ -38,7 +38,7 @@ mysql -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" \
 # Wait for chain RPC
 echo "Waiting for chain RPC at $RPC_HOST:$RPC_PORT..."
 for i in $(seq 1 120); do
-  if curl -sf "http://${RPC_HOST}:${RPC_PORT}/status" >/dev/null 2>&1; then
+  if bash -lc "exec 3<>/dev/tcp/${RPC_HOST}/${RPC_PORT}" >/dev/null 2>&1; then
     echo "Chain RPC is ready."
     break
   fi
@@ -136,8 +136,9 @@ sed -i "/^\[BsDB\]/,/^\[/ { s|Address = '.*'|Address = '${MYSQL_HOST}:${MYSQL_PO
 sed -i "/^\[BsDB\]/,/^\[/ { s|Database = '.*'|Database = '${BS_DB_NAME}'|g; }" config.toml
 
 # Patch config: PieceStore
+SP_STORAGE_DIR="${SP_STORAGE_DIR:-${SP_HOME}/storage}"
 sed -i "s|Storage = '.*'|Storage = 'file'|g" config.toml
-sed -i "s|BucketURL = '.*'|BucketURL = '/data/sp-storage'|g" config.toml
+sed -i "s|BucketURL = '.*'|BucketURL = '${SP_STORAGE_DIR}'|g" config.toml
 
 # Patch config: BlockSyncer modules and workers
 sed -i "/\[BlockSyncer\]/,/^\[/ { s|Modules = \[.*\]|Modules = ['epoch','bucket','object','payment','group','permission','storage_provider','prefix_tree','virtual_group','sp_exit_events','object_id_map','general']|g; }" config.toml
@@ -147,7 +148,7 @@ sed -i "/\[BlockSyncer\]/,/^\[/ { s|Workers = .*|Workers = 50|g; }" config.toml
 sed -i "s|Path = '.*'|Path = ''|g" config.toml
 
 # Ensure storage directory exists
-mkdir -p /data/sp-storage
+mkdir -p "$SP_STORAGE_DIR"
 
 echo "Starting storage provider..."
 exec moca-sp \

@@ -24,21 +24,15 @@ setup: ## Set up local docker-compose environment
 teardown: ## Tear down local environment (containers + volumes + cloned repos)
 	./scripts/teardown.sh $(ENV)
 
-clean: teardown ## teardown + remove built images (mocad-local, moca-sp-local, moca-cmd-local, moca-genesis-init, compose-generated)
-	@docker rmi -f \
-		mocad-local:latest mocad-cosmovisor:latest \
-		moca-sp-local:latest moca-cmd-local:latest moca-genesis-init:latest 2>/dev/null || true
-	@docker images --format '{{.Repository}}:{{.Tag}}' \
-		| grep -E '^moca-e2e.*-(validator|sp|moca-cmd|genesis)' \
-		| xargs -r docker rmi -f 2>/dev/null || true
+clean: teardown ## teardown + prune dangling Docker images
 	@docker image prune -f >/dev/null 2>&1 || true
-	@echo "=== Images cleaned ==="
+	@echo "=== Docker image cache pruned ==="
 
-clone: ## Clone all repos at stack.yaml refs
-	./scripts/clone-repos.sh $(STACK_FILE)
+clone: ## No-op in image mode (kept for compatibility)
+	@echo "clone is disabled in image mode"
 
-build: ## Build all Docker images from cloned repos
-	./scripts/build.sh $(ENV)
+build: ## Pull all Docker images declared by the topology
+	./scripts/build.sh $(ENV) $(TOPOLOGY)
 
 generate: ## Generate docker-compose from topology
 	./scripts/generate-compose.sh $(TOPOLOGY) $(COMPOSE_FILE)

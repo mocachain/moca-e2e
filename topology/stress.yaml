@@ -11,6 +11,11 @@ chain:
   gov_voting_period: "15s"
   block_time: "1s"
 
+images:
+  validator: ghcr.io/mocachain/mocad:latest
+  cosmovisor: ghcr.io/mocachain/mocad:latest
+  storage_provider: ghcr.io/mocachain/moca-storage-provider:latest
+
 validators:
   - name: validator-0
     mode: docker

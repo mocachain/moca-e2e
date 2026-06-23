@@ -26,15 +26,27 @@ if [ -z "$OWNER_ADDR" ]; then
 fi
 
 run_mocad_group_smoke() {
-  local group_name
+  local group_name priv
   group_name="e2e-test-group-$(date +%s)"
   echo "Testing storage group (mocad tx path): $group_name"
   echo "  Owner: $OWNER_ADDR"
   echo "  Member: $MEMBER_ADDR"
 
+  # mocad's `tx storage create-group/update-group-member/delete-group` are EVM
+  # precompile calls: they sign with the raw eth private key passed via
+  # --privatekey, NOT the keyring --from account. Without it the CLI aborts in
+  # NewPrivateKeyManager("") with "len of Keybytes is not equal to 32" before
+  # ever broadcasting. (--evm-node is already injected by exec_mocad on remote.)
+  priv=$(exec_mocad keys unsafe-export-eth-key "$TEST_KEY" --keyring-backend test 2>/dev/null || echo "")
+  if [ -z "$priv" ]; then
+    echo "SKIP: could not export eth key for '$TEST_KEY' (required for storage group txs)"
+    exit 0
+  fi
+
   echo "  Creating group..."
-  local create_result
-  create_result=$(exec_mocad tx storage create-group "$group_name" \
+  local create_out create_hash
+  create_out=$(exec_mocad tx storage create-group "$group_name" \
+    --privatekey "$priv" \
     --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
@@ -42,21 +54,38 @@ run_mocad_group_smoke() {
     --gas auto --gas-adjustment 1.5 \
     -y 2>/dev/null || echo "FAILED")
 
-  if echo "$create_result" | grep -q "FAILED\|Error\|error"; then
+  create_hash=$(echo "$create_out" | grep -oE '0x[0-9a-fA-F]{64}' | head -1)
+  if [ -z "$create_hash" ]; then
     echo "FAIL: group creation failed on mocad path (group does not need SP; this is a real error)"
-    echo "$create_result" | tail -5
+    echo "$create_out" | tail -5
     exit 1
   fi
-  wait_for_tx 5
+  wait_for_evm_tx "$create_hash" 60 || true
 
-  echo "  Querying group..."
+  # Verify via the EVM tx receipt rather than head-group/list-groups: those
+  # keeper queries are not reliably served on remote RPC nodes, but the receipt
+  # status is authoritative (0x1 == the create-group precompile call succeeded).
+  echo "  Verifying create receipt ($create_hash)..."
+  local status
+  status=$(_evm_rpc eth_getTransactionReceipt "[\"$create_hash\"]" | jq -r '.status // empty' 2>/dev/null)
+  if [ "$status" != "0x1" ]; then
+    echo "FAIL: create-group tx $create_hash did not succeed (receipt status=${status:-none})"
+    exit 1
+  fi
+  echo "  OK: group created (receipt status 0x1)"
+
+  # Best-effort head-group (informational; not served on all remote RPC nodes).
   exec_mocad query storage head-group "$OWNER_ADDR" "$group_name" \
     --node "$TM_RPC" --output json 2>/dev/null | jq -r '.group_info.id // empty' || true
 
   if [ -n "$MEMBER_ADDR" ]; then
-    echo "  Adding member..."
-    exec_mocad tx storage update-group-member "$group_name" \
-      --add-members "$MEMBER_ADDR" \
+    echo "  Adding member (best-effort)..."
+    # update-group-member uses positional args, not flags:
+    #   [group-name] [member-to-add] [member-expiration] [member-to-delete]
+    local member_exp
+    member_exp=$(( $(date +%s) + 31536000 ))  # +1 year
+    exec_mocad tx storage update-group-member "$group_name" "$MEMBER_ADDR" "$member_exp" "" \
+      --privatekey "$priv" \
       --from "$TEST_KEY" \
       --keyring-backend test \
       --chain-id "$CHAIN_ID" \
@@ -66,15 +95,22 @@ run_mocad_group_smoke() {
     wait_for_tx 3
   fi
 
-  echo "  Deleting group..."
-  exec_mocad tx storage delete-group "$group_name" \
+  echo "  Deleting group (best-effort)..."
+  local del_out del_hash
+  del_out=$(exec_mocad tx storage delete-group "$group_name" \
+    --privatekey "$priv" \
     --from "$TEST_KEY" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
     --gas auto --gas-adjustment 1.5 \
-    -y 2>/dev/null || true
-  wait_for_tx 3
+    -y 2>/dev/null || echo "")
+  del_hash=$(echo "$del_out" | grep -oE '0x[0-9a-fA-F]{64}' | head -1)
+  if [ -n "$del_hash" ]; then
+    wait_for_evm_tx "$del_hash" 60 || true
+  else
+    wait_for_tx 3
+  fi
   echo "PASS: storage group operations tested (mocad path)"
 }
 

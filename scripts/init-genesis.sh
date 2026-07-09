@@ -44,8 +44,9 @@ TMPFILE=$(mktemp)
 # Replace ALL occurrences of "stake" denom with our denom
 sed -i "s/\"stake\"/\"${DENOM}\"/g" "$GENESIS"
 
-# Set denom_metadata for bank module (required for chain init — name field must not be blank)
-NATIVE_COIN_DESC="{\"description\":\"The native staking token of the Moca.\",\"denom_units\":[{\"denom\":\"${DENOM}\",\"exponent\":0,\"aliases\":[\"wei\"]}],\"base\":\"${DENOM}\",\"display\":\"${DENOM}\",\"name\":\"Moca\",\"symbol\":\"MOCA\"}"
+# Set denom_metadata for bank module — mirrors moca's mocaDenomMetadata (app/app.go): cosmos/evm
+# resolves EVM coin decimals from the display unit's exponent, so display must be moca@18.
+NATIVE_COIN_DESC="{\"description\":\"The native staking and EVM token of the Moca chain\",\"denom_units\":[{\"denom\":\"${DENOM}\",\"exponent\":0},{\"denom\":\"moca\",\"exponent\":18}],\"base\":\"${DENOM}\",\"display\":\"moca\",\"name\":\"moca\",\"symbol\":\"MOCA\"}"
 jq --argjson meta "[${NATIVE_COIN_DESC}]" '.app_state.bank.denom_metadata = $meta' "$GENESIS" > "$TMPFILE" && mv "$TMPFILE" "$GENESIS"
 
 # Set governance params
@@ -346,6 +347,10 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
   sed -i "s|src-chain-id = 1|src-chain-id = ${SRC_CHAIN_ID:-5151}|" "$VOUT/config/app.toml"
   sed -i "s|dest-bsc-chain-id = 2|dest-bsc-chain-id = 97|" "$VOUT/config/app.toml"
   sed -i "s|dest-op-chain-id = 3|dest-op-chain-id = 5611|" "$VOUT/config/app.toml"
+
+  # Patch app.toml — EIP-155 EVM chain id (cosmos/evm; default 0 falls back to 262144).
+  # No-op on older moca refs where the key doesn't exist.
+  sed -i "s|^evm-chain-id = .*|evm-chain-id = ${SRC_CHAIN_ID:-5151}|" "$VOUT/config/app.toml"
 
   # Patch app.toml — minimum gas prices
   sed -i "s|minimum-gas-prices = \".*\"|minimum-gas-prices = \"0${DENOM}\"|" "$VOUT/config/app.toml"

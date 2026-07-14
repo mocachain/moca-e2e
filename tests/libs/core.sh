@@ -265,6 +265,7 @@ wait_for_evm_tx() {
 # Extract the EVM tx hash from moca-cmd output ("transaction hash:  0x...").
 # Empty result means no hash was printed (query commands, errors, etc).
 extract_evm_tx_hash() {
-  echo "${1:-}" | grep -oE 'transaction hash:[[:space:]]+0x[0-9a-fA-F]{64}' \
+  # moca-cmd prints "transaction hash:" for most ops but "txn hash:" for policy ops.
+  echo "${1:-}" | grep -oE '(transaction|txn) hash:[[:space:]]*0x[0-9a-fA-F]{64}' \
     | grep -oE '0x[0-9a-fA-F]{64}' | head -1
 }

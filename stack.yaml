@@ -5,7 +5,7 @@
 components:
   moca:
     repo: mocachain/moca
-    ref: 58764f8b64e6cd8d286aefce74cd2af798b49d48
+    ref: e0877cc102f130b75e9939027c24d7869552a374
   moca-storage-provider:
     repo: mocachain/moca-storage-provider
     ref: 2cb51af59081076bc4ef16122941070816c76e0e

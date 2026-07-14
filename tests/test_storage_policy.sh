@@ -89,15 +89,22 @@ run_moca_cmd_policy_full() {
   object_path="${bucket_name}/${object_name}"
   group_name="e2e-pol-group-$(date +%s)-${RANDOM}"
 
-  local grantee
-  grantee="$(exec_moca_cmd account ls 2>/dev/null | grep -oE '0x[a-fA-F0-9]{40}' | head -1 || true)"
-  if [ -z "$grantee" ]; then
-    grantee="$OWNER_ADDR"
+  # The policy principal must differ from the resource owner — the chain rejects
+  # self-grants (x/storage ValidatePrincipal: "principal account can not be the bucket owner").
+  local signer grantee
+  signer="$(exec_moca_cmd account ls 2>/dev/null | grep -oE '0x[a-fA-F0-9]{40}' | head -1 || true)"
+  if [ -z "$signer" ]; then
+    signer="$OWNER_ADDR"
   fi
+  grantee="0x70997970C51812dc3A010C7d01b50e0d17dc79C8" # well-known test address (Hardhat #1) != signer
 
   local bucket_res="grn:b::${bucket_name}"
   local object_res="grn:o::${bucket_name}/${object_name}"
-  local group_res="grn:g:${grantee}:${group_name}"
+  # A group GRN embeds the group OWNER (the signer that created it), not the grantee.
+  local group_res="grn:g:${signer}:${group_name}"
+
+  # Hard mode: verify every policy tx receipt on-chain (read by moca_cmd_tx).
+  export CHECK_TX_STATUS=1
 
   cleanup() {
     exec_moca_cmd_signed bucket rm "$bucket_url" >/dev/null 2>&1 || true
@@ -105,66 +112,83 @@ run_moca_cmd_policy_full() {
   }
   trap cleanup EXIT
 
-  echo "Testing policy (moca-cmd path, grantee=$grantee)"
+  echo "Testing policy (moca-cmd path, signer=$signer grantee=$grantee)"
 
   print_test_section "create bucket"
   local out
   out=$(exec_moca_cmd_signed bucket create --primarySP "$PRIMARY_SP" "$bucket_url" || true)
   if ! echo "$out" | grep -q "make_bucket:\|$bucket_name"; then
-    echo "WARN: bucket create failed for policy test"
-    trap - EXIT
-    exit 0
+    echo "FAIL: bucket create failed for policy test"
+    echo "$out" | head -5
+    exit 1
   fi
   wait_for_block 4
 
-  OBJECT_CREATED=false
-  print_test_section "put object (optional)"
+  print_test_section "put object"
   echo "content" > "/tmp/${object_name}"
   # moca-cmd returns once the object is SEALED (replicated + signed by secondary
   # SPs), so we don't need a separate seal poll here.
   out=$(exec_moca_cmd_signed object put "/tmp/${object_name}" "$object_path" || true)
-  if echo "$out" | grep -qiE "created|txHash"; then
-    OBJECT_CREATED=true
-  fi
   rm -f "/tmp/${object_name}"
+  if ! echo "$out" | grep -qiE "created|txHash"; then
+    echo "FAIL: object put failed (object policy needs it)"
+    echo "$out" | head -5
+    exit 1
+  fi
 
-  GROUP_CREATED=false
-  print_test_section "create group (optional)"
+  print_test_section "create group"
   out=$(exec_moca_cmd_signed group create "$group_name" || true)
-  if echo "$out" | grep -qiE "make_group|group id"; then
-    GROUP_CREATED=true
+  if ! echo "$out" | grep -qiE "make_group|group id"; then
+    echo "FAIL: group create failed (group policy needs it)"
+    echo "$out" | head -5
+    exit 1
   fi
   wait_for_block 3
+
+  # put_policy_checked <label> <actions> <resource>: put (receipt-verified) then
+  # assert the policy is actually listed for the grantee.
+  put_policy_checked() {
+    local label="$1" actions="$2" res="$3" p_out
+    if ! p_out=$(moca_cmd_tx policy put --grantee "$grantee" --actions "$actions" "$res"); then
+      echo "FAIL: $label policy put failed on-chain"
+      echo "$p_out" | head -5
+      exit 1
+    fi
+    wait_for_block 3
+    p_out=$(exec_moca_cmd policy ls --grantee "$grantee" "$res" || true)
+    echo "$p_out" | head -15
+    if [ -z "$p_out" ] || echo "$p_out" | grep -qiE "No such Policy|run command error"; then
+      echo "FAIL: $label policy not listed after put"
+      exit 1
+    fi
+  }
 
   print_test_section "bucket policy put / ls"
-  out=$(exec_moca_cmd_signed policy put --grantee "$grantee" --actions "createObj,getObj" "$bucket_res" || true)
-  if ! echo "$out" | grep -qiE "txn hash|txHash|hash"; then
-    echo "WARN: bucket policy put may have failed"
+  put_policy_checked "bucket" "createObj,getObj" "$bucket_res"
+
+  print_test_section "object policy put / ls"
+  put_policy_checked "object" "get,delete" "$object_res"
+
+  print_test_section "group policy put / ls / rm"
+  put_policy_checked "group" "update" "$group_res"
+  if ! moca_cmd_tx policy rm --grantee "$grantee" "$group_res" >/dev/null; then
+    echo "FAIL: group policy rm failed on-chain"
+    exit 1
   fi
   wait_for_block 3
-  exec_moca_cmd policy ls --grantee "$grantee" "$bucket_res" 2>/dev/null | head -15 || true
-
-  if [ "$OBJECT_CREATED" = true ]; then
-    print_test_section "object policy put / ls"
-    out=$(exec_moca_cmd_signed policy put --grantee "$grantee" --actions "get,delete" "$object_res" || true)
-    echo "$out" | head -5
-    wait_for_block 3
-    exec_moca_cmd policy ls --grantee "$grantee" "$object_res" 2>/dev/null | head -15 || true
-  fi
-
-  if [ "$GROUP_CREATED" = true ]; then
-    print_test_section "group policy put / ls / rm"
-    out=$(exec_moca_cmd_signed policy put --grantee "$grantee" --actions "update" "$group_res" || true)
-    echo "$out" | head -5
-    wait_for_block 3
-    exec_moca_cmd policy ls --grantee "$grantee" "$group_res" 2>/dev/null | head -10 || true
-    exec_moca_cmd_signed policy rm --grantee "$grantee" "$group_res" 2>/dev/null || true
-    wait_for_block 3
-  fi
 
   print_test_section "bucket policy rm"
-  exec_moca_cmd_signed policy rm --grantee "$grantee" "$bucket_res" 2>/dev/null || true
+  if ! moca_cmd_tx policy rm --grantee "$grantee" "$bucket_res" >/dev/null; then
+    echo "FAIL: bucket policy rm failed on-chain"
+    exit 1
+  fi
   wait_for_block 3
+  out=$(exec_moca_cmd policy ls --grantee "$grantee" "$bucket_res" || true)
+  if ! echo "$out" | grep -qi "No such Policy"; then
+    echo "FAIL: bucket policy still listed after rm"
+    echo "$out" | head -10
+    exit 1
+  fi
 
   exec_moca_cmd_signed group rm "$group_name" >/dev/null 2>&1 || true
   exec_moca_cmd_signed bucket rm "$bucket_url" >/dev/null 2>&1 || true

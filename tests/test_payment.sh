@@ -90,6 +90,7 @@ run_mocad_payment() {
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
+    --gas auto --gas-adjustment 1.5 \
     --fees "$FEES" \
     -y 2>/dev/null || echo "FAILED")
 
@@ -131,6 +132,7 @@ run_mocad_payment() {
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
+    --gas auto --gas-adjustment 1.5 \
     --fees "$FEES" \
     -y 2>/dev/null || echo "  WARN: deposit may have failed"
   wait_for_tx 5
@@ -146,6 +148,7 @@ run_mocad_payment() {
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
+    --gas auto --gas-adjustment 1.5 \
     --fees "$FEES" \
     -y 2>/dev/null || echo "  WARN: withdraw may have failed"
   wait_for_tx 3

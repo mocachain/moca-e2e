@@ -93,7 +93,11 @@ for key in SealGasLimit RejectSealGasLimit DiscontinueBucketGasLimit \
           DepositGasLimit DeleteGlobalVirtualGroupGasLimit \
           DelegateCreateObjectGasLimit DelegateUpdateObjectContentGasLimit \
           ReserveSwapInGasLimit CompleteSwapInGasLimit CancelSwapInGasLimit; do
-  sed -i "s|^${key} = 0$|${key} = 180000|" config.toml
+  # 5M, not 180000: since moca #332 the precompiles meter real KV store gas on
+  # top of the flat RequiredGas, so 180000 reverts state-heavy SP ops. Unused
+  # gas is refunded, so the headroom is free. Match any current value (moca-sp
+  # dumps these as 180000, not 0), so the substitution actually applies.
+  sed -i -E "s|^${key} = [0-9]+$|${key} = 5000000|" config.toml
 done
 for key in SealFeeAmount RejectSealFeeAmount DiscontinueBucketFeeAmount \
           CreateGlobalVirtualGroupFeeAmount CompleteMigrateBucketFeeAmount \

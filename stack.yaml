@@ -11,7 +11,7 @@ components:
     ref: 2cb51af59081076bc4ef16122941070816c76e0e
   moca-cmd:
     repo: mocachain/moca-cmd
-    ref: 56f49dc8490526257f5d8e9b310350f2c262080b
+    ref: ede7c9c694c326a5deb2a5f1c1c6f8be646c16d7
   moca-juno:
     repo: mocachain/moca-juno
     ref: 74e124b2bd80ebaf067c19d6fd293a0bb5b0e8d7

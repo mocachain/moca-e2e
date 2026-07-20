@@ -49,6 +49,7 @@ run_mocad_object_smoke() {
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
+    --gas auto --gas-adjustment 1.5 \
     --fees "$FEES" \
     -y 2>/dev/null || echo "FAILED")
   if echo "$cr" | grep -q "FAILED\|Error\|error"; then
@@ -62,6 +63,7 @@ run_mocad_object_smoke() {
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
+    --gas auto --gas-adjustment 1.5 \
     --fees "$FEES" \
     -y 2>/dev/null || true
   echo "PASS: storage object fallback (bucket smoke only; use moca-cmd for full flow)"

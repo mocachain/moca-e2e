@@ -181,7 +181,7 @@ EOF
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node tcp://localhost:26657 \
-    --fees "$FEES" \
+    --gas auto --gas-adjustment 1.5 \
     -y 2>&1 || true)"
   echo "$submit_out"
   sleep 5
@@ -211,7 +211,7 @@ EOF
       --keyring-backend test \
       --chain-id "$CHAIN_ID" \
       --node tcp://localhost:26657 \
-      --fees "$FEES" \
+      --gas auto --gas-adjustment 1.5 \
       --home /root/.mocad \
       -y 2>&1 || true)"
     echo "$vote_out"

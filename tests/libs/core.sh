@@ -9,7 +9,6 @@ RPC="${RPC:-http://localhost:26657}"
 REST="${REST:-http://localhost:1317}"
 EVM_RPC="${EVM_RPC:-http://localhost:8545}"
 TM_RPC="${TM_RPC:-$RPC}"
-FEES="${FEES:-200000000000000amoca}"
 VALIDATOR_CONTAINER="${VALIDATOR_CONTAINER:-validator-0}"
 
 # Test key: for local use testaccount (created in genesis), for devnet/testnet use DEVNET_TEST_KEY
@@ -127,48 +126,75 @@ require_test_key() {
 }
 
 # --- Transaction helpers ---
-# cosmos_tx: broadcast a Cosmos tx in sync mode and wait for on-chain inclusion.
-# Returns 0 only if the tx was included with code=0. Returns 1 on broadcast
-# failure or non-zero on-chain code.
-#
-# Inlines docker-vs-local detection so mocad's stderr reaches our 2>&1 capture
-# (exec_mocad always silences stderr, which would hide real broadcast errors).
-cosmos_tx() {
-  local out hash
+# _cosmos_broadcast: run one `--gas auto` broadcast attempt (docker or local
+# mocad) and echo the raw json/stderr. Split out so cosmos_tx can retry it
+# without duplicating the docker-vs-local detection.
+_cosmos_broadcast() {
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${VALIDATOR_CONTAINER}$"; then
-    out=$(docker exec "$VALIDATOR_CONTAINER" mocad tx "$@" \
+    docker exec "$VALIDATOR_CONTAINER" mocad tx "$@" \
       --home /root/.mocad \
       --keyring-backend test \
       --chain-id "$CHAIN_ID" \
       --node "$TM_RPC" \
-      --fees "$FEES" \
-      --broadcast-mode sync -y --output json 2>&1) || {
-      echo "  cosmos_tx broadcast failed: $out" >&2
-      return 1
-    }
+      --gas auto --gas-adjustment 1.5 \
+      --broadcast-mode sync -y --output json 2>&1
   elif command -v mocad >/dev/null 2>&1; then
     local extra_args=()
     [ -n "${MOCAD_HOME:-}" ] && extra_args+=(--home "$MOCAD_HOME")
     [ "${ENV:-local}" != "local" ] && [ -n "${EVM_RPC:-}" ] && extra_args+=(--evm-node "$EVM_RPC")
-    out=$(mocad tx "$@" \
+    mocad tx "$@" \
       "${extra_args[@]}" \
       --keyring-backend test \
       --chain-id "$CHAIN_ID" \
       --node "$TM_RPC" \
-      --fees "$FEES" \
-      --broadcast-mode sync -y --output json 2>&1) || {
-      echo "  cosmos_tx broadcast failed: $out" >&2
-      return 1
-    }
+      --gas auto --gas-adjustment 1.5 \
+      --broadcast-mode sync -y --output json 2>&1
   else
-    echo "ERROR: mocad not found (no ${VALIDATOR_CONTAINER} container and no local mocad on PATH)" >&2
+    echo "ERROR: mocad not found (no ${VALIDATOR_CONTAINER} container and no local mocad on PATH)"
     return 127
   fi
-  hash=$(echo "$out" | jq -r '.txhash // empty' 2>/dev/null)
-  if [ -z "$hash" ]; then
-    echo "  cosmos_tx returned no txhash: $out" >&2
-    return 1
-  fi
+}
+
+# cosmos_tx: broadcast a Cosmos tx (with `--gas auto`) and wait for on-chain
+# inclusion. Returns 0 only if included with code=0.
+#
+# Retries the account-sequence-mismatch race: `--gas auto` runs a simulate that
+# reads the signer's sequence at the latest height, which can lag a prior tx's
+# sequence bump by a block on a multi-validator net, so a back-to-back tx signs
+# at a stale sequence. Fixed gas skips the simulate and dodged this; retrying the
+# broadcast (re-simulate at the fresh sequence) is moca's standard remedy.
+cosmos_tx() {
+  local out json hash code raw attempt=0 max_attempts="${COSMOS_TX_RETRIES:-5}"
+  while :; do
+    attempt=$((attempt + 1))
+    # `|| true`: a failed broadcast (e.g. simulate-time sequence mismatch) must
+    # not trip the caller's `set -e` before we inspect $out below.
+    out=$(_cosmos_broadcast "$@") || true
+    if printf '%s' "$out" | grep -qiE "account sequence mismatch|incorrect account sequence"; then
+      if [ "$attempt" -ge "$max_attempts" ]; then
+        echo "  cosmos_tx: sequence mismatch after ${max_attempts} attempts: $out" >&2
+        return 1
+      fi
+      sleep 2
+      continue
+    fi
+    # `--gas auto` prints "gas estimate: N" to stderr, which 2>&1 merges ahead of
+    # the JSON — isolate the JSON line so jq doesn't parse-error (and abort the
+    # caller under set -e). `|| true` guards the empty/no-JSON case likewise.
+    json=$(printf '%s\n' "$out" | grep -E '^\{' | head -1 || true)
+    hash=$(printf '%s' "$json" | jq -r '.txhash // empty' 2>/dev/null || true)
+    if [ -z "$hash" ]; then
+      echo "  cosmos_tx broadcast failed: $out" >&2
+      return 1
+    fi
+    code=$(printf '%s' "$json" | jq -r '.code // empty' 2>/dev/null || true)
+    if [ -n "$code" ] && [ "$code" != "0" ]; then
+      raw=$(printf '%s' "$json" | jq -r '.raw_log // empty' 2>/dev/null || true)
+      echo "  cosmos_tx rejected at CheckTx: code=$code log=$raw" >&2
+      return 1
+    fi
+    break
+  done
   wait_for_cosmos_tx "$hash"
 }
 

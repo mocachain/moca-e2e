@@ -352,8 +352,10 @@ for i in $(seq 0 $((NUM_VALIDATORS - 1))); do
   # No-op on older moca refs where the key doesn't exist.
   sed -i "s|^evm-chain-id = .*|evm-chain-id = ${SRC_CHAIN_ID:-5151}|" "$VOUT/config/app.toml"
 
-  # Patch app.toml — minimum gas prices
-  sed -i "s|minimum-gas-prices = \".*\"|minimum-gas-prices = \"0${DENOM}\"|" "$VOUT/config/app.toml"
+  # Patch app.toml — minimum gas prices. Non-zero (5 gwei) so `--gas auto` works:
+  # the fork derives fees from the node's MinGasPrice, and an empty/zero value
+  # makes the CLI's fee parse fail ("invalid decimal coin expression").
+  sed -i "s|minimum-gas-prices = \".*\"|minimum-gas-prices = \"5000000000${DENOM}\"|" "$VOUT/config/app.toml"
 
   # Copy keyring
   cp -r "$VHOME/keyring-test/"* "$VOUT/keyring-test/" 2>/dev/null || true

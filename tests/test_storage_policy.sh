@@ -53,7 +53,7 @@ run_mocad_policy() {
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
-    --fees "$FEES" \
+    --gas auto --gas-adjustment 1.5 \
     -y 2>/dev/null || {
     echo "SKIP: mocad-only path cannot complete bucket create (install moca-cmd)"
     exit 0
@@ -67,7 +67,7 @@ run_mocad_policy() {
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
-    --fees "$FEES" \
+    --gas auto --gas-adjustment 1.5 \
     -y 2>/dev/null || true
   wait_for_tx 3
 
@@ -76,7 +76,7 @@ run_mocad_policy() {
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
-    --fees "$FEES" \
+    --gas auto --gas-adjustment 1.5 \
     -y 2>/dev/null || true
   echo "PASS: storage permission policy (mocad path)"
 }

@@ -39,7 +39,7 @@ run_mocad_group_smoke() {
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
-    --fees "$FEES" \
+    --gas auto --gas-adjustment 1.5 \
     -y 2>/dev/null || echo "FAILED")
 
   if echo "$create_result" | grep -q "FAILED\|Error\|error"; then
@@ -61,7 +61,7 @@ run_mocad_group_smoke() {
       --keyring-backend test \
       --chain-id "$CHAIN_ID" \
       --node "$TM_RPC" \
-      --fees "$FEES" \
+      --gas auto --gas-adjustment 1.5 \
       -y 2>/dev/null || true
     wait_for_tx 3
   fi
@@ -72,7 +72,7 @@ run_mocad_group_smoke() {
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
-    --fees "$FEES" \
+    --gas auto --gas-adjustment 1.5 \
     -y 2>/dev/null || true
   wait_for_tx 3
   echo "PASS: storage group operations tested (mocad path)"

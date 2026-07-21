@@ -47,6 +47,12 @@ jobs:
           sudo chmod +x /usr/local/bin/yq
           sudo apt-get install -y jq
 
+      # cast (Foundry) is required by the EVM tests (test_evm_transfer,
+      # test_evm_erc20). Without it they SKIP, silently leaving the EVM path
+      # untested. Installs forge/cast/anvil via the official foundry-rs action.
+      - name: Install Foundry (cast)
+        uses: foundry-rs/foundry-toolchain@v1
+
       - name: Make scripts executable
         run: |
           chmod +x scripts/*.sh

@@ -50,7 +50,6 @@ run_mocad_bucket_smoke() {
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
     --gas auto --gas-adjustment 1.5 \
-    --fees "$FEES" \
     -y 2>/dev/null || echo "FAILED")
 
   if echo "$create_result" | grep -q "FAILED\|Error\|error"; then
@@ -78,7 +77,6 @@ run_mocad_bucket_smoke() {
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
     --gas auto --gas-adjustment 1.5 \
-    --fees "$FEES" \
     -y 2>/dev/null || true
   wait_for_tx 3
   echo "PASS: storage bucket operations tested (mocad path)"

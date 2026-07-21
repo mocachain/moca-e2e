@@ -9,7 +9,6 @@ RPC="${RPC:-http://localhost:26657}"
 REST="${REST:-http://localhost:1317}"
 EVM_RPC="${EVM_RPC:-http://localhost:8545}"
 TM_RPC="${TM_RPC:-$RPC}"
-FEES="${FEES:-200000000000000amoca}"
 VALIDATOR_CONTAINER="${VALIDATOR_CONTAINER:-validator-0}"
 
 # Test key: for local use testaccount (created in genesis), for devnet/testnet use DEVNET_TEST_KEY
@@ -138,7 +137,6 @@ _cosmos_broadcast() {
       --chain-id "$CHAIN_ID" \
       --node "$TM_RPC" \
       --gas auto --gas-adjustment 1.5 \
-      --fees "$FEES" \
       --broadcast-mode sync -y --output json 2>&1
   elif command -v mocad >/dev/null 2>&1; then
     local extra_args=()
@@ -150,7 +148,6 @@ _cosmos_broadcast() {
       --chain-id "$CHAIN_ID" \
       --node "$TM_RPC" \
       --gas auto --gas-adjustment 1.5 \
-      --fees "$FEES" \
       --broadcast-mode sync -y --output json 2>&1
   else
     echo "ERROR: mocad not found (no ${VALIDATOR_CONTAINER} container and no local mocad on PATH)"

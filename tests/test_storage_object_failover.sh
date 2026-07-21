@@ -182,7 +182,6 @@ EOF
     --chain-id "$CHAIN_ID" \
     --node tcp://localhost:26657 \
     --gas auto --gas-adjustment 1.5 \
-    --fees "$FEES" \
     -y 2>&1 || true)"
   echo "$submit_out"
   sleep 5
@@ -213,7 +212,6 @@ EOF
       --chain-id "$CHAIN_ID" \
       --node tcp://localhost:26657 \
       --gas auto --gas-adjustment 1.5 \
-      --fees "$FEES" \
       --home /root/.mocad \
       -y 2>&1 || true)"
     echo "$vote_out"

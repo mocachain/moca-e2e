@@ -24,19 +24,26 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: e2e-test-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
-jobs:
-  e2e:
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    env:
-      TOPOLOGY: topology/${{ github.event.inputs.topology || 'default' }}.yaml
-      COMPOSE: docker compose -f docker-compose.generated.yml
+env:
+  GHCR_REPO: ghcr.io/${{ github.repository_owner }}/moca-e2e
 
+jobs:
+  # Build the component images once and cache them in this repo's GHCR, keyed by
+  # each component's commit — unchanged components are pulled, not rebuilt. The
+  # sharded e2e jobs below reuse these images instead of each rebuilding.
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      moca_sha: ${{ steps.shas.outputs.moca_sha }}
+      sp_sha: ${{ steps.shas.outputs.sp_sha }}
+      cmd_sha: ${{ steps.shas.outputs.cmd_sha }}
     steps:
       - uses: actions/checkout@v5
 
@@ -47,9 +54,61 @@ jobs:
           sudo chmod +x /usr/local/bin/yq
           sudo apt-get install -y jq
 
-      # cast (Foundry) is required by the EVM tests (test_evm_transfer,
-      # test_evm_erc20). Without it they SKIP, silently leaving the EVM path
-      # untested. Installs forge/cast/anvil via the official foundry-rs action.
+      - name: Make scripts executable
+        run: chmod +x scripts/*.sh
+
+      - name: Clone repos at stack.yaml refs
+        timeout-minutes: 5
+        run: ./scripts/clone-repos.sh stack.yaml
+        env:
+          GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
+
+      - name: Resolve component SHAs
+        id: shas
+        run: |
+          echo "moca_sha=$(git -C build/moca rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "sp_sha=$(git -C build/moca-storage-provider rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "cmd_sha=$(git -C build/moca-cmd rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and cache images
+        timeout-minutes: 25
+        run: ./scripts/build.sh local
+        env:
+          IMAGE_MODE: cache
+          GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
+
+  # Run the suite in parallel shards, each on its own 9-SP cluster built from the
+  # pulled images. Wall-clock ≈ the slowest shard instead of the full test phase.
+  e2e:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    name: e2e (${{ matrix.group }})
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [chain, sp, flows]
+    env:
+      TOPOLOGY: topology/${{ github.event.inputs.topology || 'default' }}.yaml
+      COMPOSE: docker compose -f docker-compose.generated.yml
+      IMAGE_MODE: pull
+      MOCA_SHA: ${{ needs.build.outputs.moca_sha }}
+      SP_SHA: ${{ needs.build.outputs.sp_sha }}
+      CMD_SHA: ${{ needs.build.outputs.cmd_sha }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install tools
+        timeout-minutes: 2
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          sudo apt-get install -y jq
+
+      # cast (Foundry) is required by the EVM tests in the chain shard.
       - name: Install Foundry (cast)
         uses: foundry-rs/foundry-toolchain@v1
 
@@ -58,20 +117,15 @@ jobs:
           chmod +x scripts/*.sh
           chmod +x tests/*.sh
 
-      - name: Clone repos at stack.yaml refs
-        timeout-minutes: 5
-        run: ./scripts/clone-repos.sh stack.yaml
-        env:
-          GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
-
       - name: Generate docker-compose
         run: ./scripts/generate-compose.sh "$TOPOLOGY" docker-compose.generated.yml
 
-      - name: Build images
-        timeout-minutes: 20
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Pull prebuilt images
+        timeout-minutes: 5
         run: ./scripts/build.sh local
-        env:
-          GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
 
       - name: Run genesis init
         timeout-minutes: 5
@@ -130,7 +184,9 @@ jobs:
           done
 
       - name: Run E2E tests
-        timeout-minutes: 15
+        timeout-minutes: 20
+        env:
+          TEST_GROUP: ${{ matrix.group }}
         run: ./scripts/run-suite.sh local config/local.yaml
 
       - name: Collect logs
@@ -157,7 +213,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: test-results
+          name: test-results-${{ matrix.group }}
           path: test-results/
           retention-days: 7
 

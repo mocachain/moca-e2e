@@ -44,11 +44,27 @@ PASSED=0
 FAILED=0
 ERRORS=""
 
+# Map each test to a shard group so parallel CI jobs can run disjoint subsets:
+#   chain — consensus / bank / staking / EVM (no SP dependency)
+#   sp    — SP registration, config, lifecycle (incl. sp-exit)
+#   flows — storage / payment / virtualgroup / object-failover (also any new test)
+group_of() {
+  case "$1" in
+    smoke_sp_status.sh|test_sp_*) echo sp ;;
+    smoke_chain_status.sh|smoke_validator_set.sh|test_bank_*|test_block_*|test_cross_*|test_staking*|test_validator_*|test_evm_*) echo chain ;;
+    *) echo flows ;;
+  esac
+}
+
 for test_file in "$TESTS_DIR"/$TEST_PATTERN; do
   [ -f "$test_file" ] || continue
   test_name=$(basename "$test_file")
   # Skip helper libraries
   [ "$test_name" = "lib.sh" ] && continue
+  # Shard filter: when TEST_GROUP is set, run only that group's tests (parallel CI).
+  if [ -n "${TEST_GROUP:-}" ] && [ "$(group_of "$test_name")" != "$TEST_GROUP" ]; then
+    continue
+  fi
   echo ""
   echo "--- Running: $test_name"
 

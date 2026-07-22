@@ -34,10 +34,15 @@ MOCA_SHA="${MOCA_SHA:-$(sha_of moca)}"
 SP_SHA="${SP_SHA:-$(sha_of moca-storage-provider)}"
 CMD_SHA="${CMD_SHA:-$(sha_of moca-cmd)}"
 
+# Recipe hash: the docker/ tree (Dockerfiles + entrypoints). Folding it into the
+# cache tag invalidates images when the build recipe changes, not just the source.
+# Both build and shard jobs compute it from the same checkout, so keys line up.
+RECIPE_HASH="$(git -C "$ROOT_DIR" rev-parse --short=12 HEAD:docker 2>/dev/null || echo r0)"
+
 # docker_image <local-tag> <cache-name> <sha> [docker build args...]
 docker_image() {
   local local_tag="$1" name="$2" sha="$3"; shift 3
-  local ref="${GHCR_REPO}-${name}:${sha}"
+  local ref="${GHCR_REPO}-${name}:${sha}-${RECIPE_HASH}"
   case "${IMAGE_MODE:-}" in
     pull)
       echo "--- pull ${ref}"

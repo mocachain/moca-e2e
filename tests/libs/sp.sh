@@ -128,7 +128,7 @@ current_family_count() {
 
 select_target_sp_index() {
   local requested="${E2E_SP_EXIT_INDEX:-}"
-  local candidate_id candidate_idx family_count seen_first
+  local candidate_id candidate_idx family_count
 
   if [ -n "$requested" ] && [ "$requested" -ge 0 ] 2>/dev/null && [ "$requested" -lt "${NUM_SPS:-0}" ] 2>/dev/null; then
     printf '%s\n' "$requested"
@@ -137,21 +137,30 @@ select_target_sp_index() {
 
   family_count="$(current_family_count)"
   if [ "$family_count" = "0" ]; then
-    seen_first=0
-    for candidate_id in $(printf '%s\n' "${SP_JSON:-}" \
-      | jq -r '.sps[] | select(.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0") | .id' 2>/dev/null | sort -nr); do
-      [ -n "$candidate_id" ] || continue
-      candidate_idx=$((candidate_id - 1))
-      if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^sp-${candidate_idx}$"; then
-        continue
+    # No GVG families exist yet, so we can't see who is a real secondary. Create a
+    # throwaway bucket, read its family's actual secondary SPs, and target one of
+    # those. A fixed pick (e.g. 2nd-highest id) is excluded from a 7-of-N family
+    # once N > 8, which is exactly why 9 SPs broke the sp-exit tests.
+    local probe_primary probe_bucket probe_url probe_head probe_family
+    probe_primary="$(printf '%s\n' "${SP_JSON:-}" \
+      | jq -r '.sps[] | select(.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0") | .operator_address' 2>/dev/null | head -1)"
+    if [ -n "$probe_primary" ]; then
+      probe_bucket="e2e-sp-exit-probe-$(date +%s)-${RANDOM}"
+      probe_url="moca://${probe_bucket}"
+      if moca_cmd_tx bucket create --primarySP "$probe_primary" "$probe_url" >/dev/null 2>&1; then
+        probe_head="$(exec_moca_cmd bucket head "$probe_url" 2>&1 || true)"
+        probe_family="$(printf '%s\n' "$probe_head" | awk -F': ' '/^virtual_group_family_id:/ {print $2; exit}')"
+        for candidate_id in $(secondary_sp_ids_by_family "${probe_family:-0}" 2>/dev/null | jq -r '.[]?' 2>/dev/null); do
+          candidate_idx=$((candidate_id - 1))
+          if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^sp-${candidate_idx}$"; then
+            exec_moca_cmd bucket rm "$probe_url" >/dev/null 2>&1 || true
+            printf '%s\n' "$candidate_idx"
+            return 0
+          fi
+        done
+        exec_moca_cmd bucket rm "$probe_url" >/dev/null 2>&1 || true
       fi
-      if [ "$seen_first" = "0" ]; then
-        seen_first=1
-        continue
-      fi
-      printf '%s\n' "$candidate_idx"
-      return 0
-    done
+    fi
   fi
 
   for candidate_id in $(printf '%s\n' "${SP_JSON:-}" \

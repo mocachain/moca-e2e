@@ -1,4 +1,4 @@
-# Default topology: 6 validators, 6 SPs
+# Default topology: 6 validators, 9 SPs
 # Used as CI default and baseline for state comparison
 
 chain:
@@ -27,7 +27,8 @@ validators:
 
 storage_providers:
   # Redundancy is 4 data + 2 parity chunks → primary + 6 unique secondaries = 7 SPs minimum.
-  # 8 gives a small rotation margin.
+  # 9 SPs: object failover needs 7 IN_SERVICE, and the two sp-exit tests each take one
+  # out of service before it, so 9 - 2 = 7 keeps it running (8 would drop to 6 → skip).
   - name: sp-0
   - name: sp-1
   - name: sp-2
@@ -36,6 +37,7 @@ storage_providers:
   - name: sp-5
   - name: sp-6
   - name: sp-7
+  - name: sp-8
 
 services:
   mysql:

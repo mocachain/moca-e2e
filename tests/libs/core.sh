@@ -30,15 +30,21 @@ writes_allowed() {
   [ "${ENV:-local}" = "local" ] || [ "${ALLOW_WRITES:-0}" = "1" ] || [ "${E2E_ALLOW_WRITES:-0}" = "1" ]
 }
 
+# skip <reason>: mark the current test as skipped (distinct from a pass) and stop.
+# run-suite classifies exit code 77 as SKIPPED, so a skipped test is never counted
+# as a pass. Prefer this over `echo "SKIP: ..."; exit 0` in new tests.
+skip() {
+  echo "SKIP: $*"
+  exit 77
+}
+
 require_write_enabled() {
   local test_name="${1:-write test}"
   if [ "${ENV:-}" = "mainnet" ]; then
-    echo "SKIP: not safe for mainnet"
-    exit 0
+    skip "not safe for mainnet"
   fi
   if ! writes_allowed; then
-    echo "SKIP: ${test_name} requires writes; set ALLOW_WRITES=1 to enable on ${ENV:-unknown}"
-    exit 0
+    skip "${test_name} requires writes; set ALLOW_WRITES=1 to enable on ${ENV:-unknown}"
   fi
 }
 
@@ -104,14 +110,12 @@ get_key_address() {
 
 require_test_key() {
   if [ -z "$TEST_KEY" ]; then
-    echo "SKIP: no test key configured (set DEVNET_TEST_KEY=<keyname> for devnet)"
-    exit 0
+    skip "no test key configured (set DEVNET_TEST_KEY=<keyname> for devnet)"
   fi
   local addr
   addr=$(get_key_address "$TEST_KEY")
   if [ -z "$addr" ]; then
-    echo "SKIP: test key '$TEST_KEY' not found in keyring"
-    exit 0
+    skip "test key '$TEST_KEY' not found in keyring"
   fi
   # On remote envs, check the account has enough funds (~3 MOCA minimum for full suite)
   if [ "${ENV:-local}" != "local" ]; then

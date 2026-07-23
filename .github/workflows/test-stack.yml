@@ -187,6 +187,9 @@ jobs:
         timeout-minutes: 20
         env:
           TEST_GROUP: ${{ matrix.group }}
+          # CI clusters provide every precondition, so a skipped test is an
+          # unexpected coverage gap — fail the shard rather than pass green.
+          STRICT_SKIPS: "1"
         run: ./scripts/run-suite.sh local config/local.yaml
 
       - name: Collect logs

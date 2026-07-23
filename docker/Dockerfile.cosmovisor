@@ -1,25 +1,13 @@
+# cosmovisor image = the already-built mocad binary (reused from mocad-local, NOT
+# recompiled) plus the cosmovisor supervisor. build.sh builds/pulls mocad first, so
+# mocad-local:latest is present in the daemon. This avoids a second full ~10-min moca
+# compile whenever the moca commit changes.
 FROM golang:1.23-bullseye AS builder
 
+# Declared for build-arg compatibility with build.sh; unused here (no moca compile).
 ARG TARGETARCH
 ARG GITHUB_TOKEN=""
 
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /build
-
-COPY build/moca/ .
-
-RUN git init && git add -A && git commit -m "build" --allow-empty 2>/dev/null || true
-RUN if [ -n "$GITHUB_TOKEN" ]; then git config --global url."https://${GITHUB_TOKEN}:@github.com/".insteadOf "https://github.com/"; fi
-
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=1 \
-    CGO_CFLAGS="-O -D__BLST_PORTABLE__" \
-    GOARCH=${TARGETARCH} \
-    make build
-
-# Build cosmovisor
 RUN go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@latest
 
 FROM debian:bullseye-slim
@@ -28,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl jq \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build/build/mocad /usr/local/bin/mocad
+COPY --from=mocad-local:latest /usr/local/bin/mocad /usr/local/bin/mocad
 COPY --from=builder /go/bin/cosmovisor /usr/local/bin/cosmovisor
 COPY docker/entrypoint-cosmovisor.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

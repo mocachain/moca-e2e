@@ -2,7 +2,7 @@
 # recompiled) plus the cosmovisor supervisor. build.sh builds/pulls mocad first, so
 # mocad-local:latest is present in the daemon. This avoids a second full ~10-min moca
 # compile whenever the moca commit changes.
-FROM golang:1.23-bullseye AS builder
+FROM golang:1.25-bookworm AS builder
 
 # Declared for build-arg compatibility with build.sh; unused here (no moca compile).
 ARG TARGETARCH
@@ -10,7 +10,7 @@ ARG GITHUB_TOKEN=""
 
 RUN go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@latest
 
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl jq \

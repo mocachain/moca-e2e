@@ -1,6 +1,6 @@
 # Genesis init container — generates keys, genesis, and validator/SP configs.
 # Writes everything to /output which is a shared volume.
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl jq bash \

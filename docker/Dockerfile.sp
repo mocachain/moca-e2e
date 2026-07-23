@@ -1,4 +1,4 @@
-FROM golang:1.23-bullseye AS builder
+FROM golang:1.25-bookworm AS builder
 
 ARG TARGETARCH
 ARG GITHUB_TOKEN=""
@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     GOARCH=${TARGETARCH} \
     make build
 
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl jq default-mysql-client \

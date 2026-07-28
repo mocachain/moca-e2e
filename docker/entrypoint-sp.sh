@@ -77,6 +77,36 @@ fi
 DSN_SPDB="${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(${MYSQL_HOST}:${MYSQL_PORT})/${DB_NAME}?parseTime=true&multiStatements=true&loc=Local"
 DSN_BSDB="${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(${MYSQL_HOST}:${MYSQL_PORT})/${BS_DB_NAME}?parseTime=true&multiStatements=true&loc=Local"
 
+# Patch config: internal gRPC mTLS. moca-sp requires [GRPCTLS] CA/cert/key at
+# startup and the signer only accepts client certs whose SPIFFE URI is in
+# [SignerAuth] AllowedClientURIs. All modules run in-process here, so a
+# per-container throwaway CA with the SP's own identity is sufficient. SANs
+# cover 127.0.0.1 and localhost because clients verify the dial host and the
+# tests dial --endpoint localhost:9333.
+TLS_DIR="$SP_HOME/grpc-tls"
+SPIFFE_ID="spiffe://mocachain.local/${SP_NAME}"
+mkdir -p "$TLS_DIR"
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+  -keyout "$TLS_DIR/ca.key" -out "$TLS_DIR/ca.crt" \
+  -subj "/CN=moca-e2e ${SP_NAME} CA" >/dev/null 2>&1
+openssl req -newkey rsa:2048 -nodes \
+  -keyout "$TLS_DIR/tls.key" -out "$TLS_DIR/tls.csr" \
+  -subj "/CN=${SP_NAME}" >/dev/null 2>&1
+{
+  echo "subjectAltName=IP:127.0.0.1,DNS:localhost,URI:${SPIFFE_ID}"
+  echo "extendedKeyUsage=serverAuth,clientAuth"
+} > "$TLS_DIR/tls.ext"
+openssl x509 -req -in "$TLS_DIR/tls.csr" \
+  -CA "$TLS_DIR/ca.crt" -CAkey "$TLS_DIR/ca.key" -CAcreateserial \
+  -out "$TLS_DIR/tls.crt" -days 2 -extfile "$TLS_DIR/tls.ext" >/dev/null 2>&1
+rm -f "$TLS_DIR/tls.csr" "$TLS_DIR/tls.ext"
+chmod 600 "$TLS_DIR/ca.key" "$TLS_DIR/tls.key"
+sed -i "s|^GRPCAddress = '.*'|GRPCAddress = '127.0.0.1:9333'|" config.toml
+sed -i "s|^CACertFile = '.*'|CACertFile = '${TLS_DIR}/ca.crt'|" config.toml
+sed -i "s|^CertFile = '.*'|CertFile = '${TLS_DIR}/tls.crt'|" config.toml
+sed -i "s|^KeyFile = '.*'|KeyFile = '${TLS_DIR}/tls.key'|" config.toml
+sed -i "s|^AllowedClientURIs = \[.*\]|AllowedClientURIs = ['${SPIFFE_ID}']|" config.toml
+
 # Patch config: Chain
 sed -i "s|ChainID = '.*'|ChainID = '${CHAIN_ID}'|g" config.toml
 sed -i "s|ChainAddress = \[.*\]|ChainAddress = ['http://${RPC_HOST}:${RPC_PORT}']|g" config.toml

@@ -35,12 +35,12 @@ echo "Testing sp-tools (moca-cmd)..."
 print_test_section "sp ls"
 OUT="$(exec_moca_cmd sp ls 2>/dev/null || true)"
 if [ -z "$OUT" ]; then
-  echo "WARN: sp ls empty"
-  exit 0
+  echo "FAIL: sp ls returned no output"
+  exit 1
 fi
 if ! echo "$OUT" | grep -qiE "operator|IN_SERVICE|storage"; then
-  echo "WARN: sp ls format unexpected"
-  exit 0
+  echo "FAIL: sp ls format unexpected"
+  exit 1
 fi
 echo "$OUT" | head -25
 
@@ -49,25 +49,23 @@ if [ -z "$EP" ]; then
   EP=$(echo "$OUT" | grep -oE 'https?://[^[:space:]]+' | head -1 || true)
 fi
 if [ -z "$EP" ]; then
-  echo "WARN: could not resolve SP endpoint"
-  echo "PASS: sp ls only"
-  exit 0
+  echo "FAIL: could not resolve any SP endpoint from sp ls"
+  exit 1
 fi
 
 print_test_section "sp head"
 H="$(exec_moca_cmd sp head "$EP" 2>/dev/null || true)"
 if ! echo "$H" | grep -qiE "operator|endpoint|SP info|STATUS"; then
-  echo "WARN: sp head output unexpected"
-else
-  echo "$H" | head -20
+  echo "FAIL: sp head output unexpected"
+  exit 1
 fi
+echo "$H" | head -20
 
 print_test_section "sp get-price"
 P="$(exec_moca_cmd sp get-price "$EP" 2>/dev/null || true)"
-if echo "$P" | grep -qiE "quota|price|bucket"; then
-  echo "$P" | head -25
-  echo "PASS: sp ls / head / get-price"
-else
-  echo "WARN: sp get-price incomplete"
-  exit 0
+if ! echo "$P" | grep -qiE "quota|price|bucket"; then
+  echo "FAIL: sp get-price output unexpected"
+  exit 1
 fi
+echo "$P" | head -25
+echo "PASS: sp ls / head / get-price"

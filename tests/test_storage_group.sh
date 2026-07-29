@@ -132,9 +132,8 @@ run_moca_cmd_group_full() {
   local out
   out=$(exec_moca_cmd_signed group create --tags="$tags" "$group_name" || true)
   if ! echo "$out" | grep -q "make_group:\|$group_name"; then
-    echo "  WARN: create group output unexpected"
-    trap - EXIT
-    exit 0
+    echo "  FAIL: group create output unexpected: $(echo "$out" | head -3)"
+    exit 1
   fi
   wait_for_tx 3
 

@@ -75,6 +75,6 @@ echo "  responsive gateway ports: $GATEWAY_OK"
 if [ "$CNT" -gt 0 ] && { [ -n "$RUNNING_SP" ] || [ "$GATEWAY_OK" -gt 0 ]; }; then
   echo "PASS: SP diagnosis checks completed"
 else
-  echo "WARN: limited SP visibility"
-  exit 0
+  echo "FAIL: no SP visibility (on-chain count: $CNT, containers: ${RUNNING_SP:-none}, gateways ok: $GATEWAY_OK)"
+  exit 1
 fi

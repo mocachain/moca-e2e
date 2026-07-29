@@ -20,9 +20,8 @@ NUM_SPS=$(echo "$SP_JSON" | jq '.sps | length // 0' 2>/dev/null || echo "0")
 echo "  Registered SPs on chain: $NUM_SPS"
 
 if [ "$NUM_SPS" -le 0 ]; then
-  echo "  WARN: No SPs registered on chain (SP gentx may not be supported in this version)"
-  echo "PASS: SP registration query works (0 SPs — expected if spgentx not available)"
-  exit 0
+  echo "  FAIL: no SPs registered on chain"
+  exit 1
 fi
 
 # Check each SP's status

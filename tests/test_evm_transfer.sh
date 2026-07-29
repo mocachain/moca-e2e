@@ -78,8 +78,8 @@ BALANCE_AFTER=$(curl -sf "$EVM_RPC" -X POST -H "Content-Type: application/json" 
 echo "  Recipient balance after: $BALANCE_AFTER"
 
 assert_ne "$BALANCE_AFTER" "$BALANCE_BEFORE" "EVM balance changed" || {
-  echo "  WARN: Balance didn't change"
-  exit 0
+  echo "  FAIL: recipient balance did not change after mined transfer"
+  exit 1
 }
 
 echo "PASS: Native EVM transfer successful"

@@ -17,9 +17,8 @@ VG_PARAMS=$(exec_mocad query virtualgroup params \
   --node "$TM_RPC" --output json 2>/dev/null || echo "")
 
 if [ -z "$VG_PARAMS" ] || [ "$VG_PARAMS" = "{}" ]; then
-  echo "  WARN: Virtualgroup module not available"
-  echo "PASS: Virtualgroup query attempted"
-  exit 0
+  echo "  FAIL: cannot query virtualgroup params"
+  exit 1
 fi
 
 GVG_STAKING=$(echo "$VG_PARAMS" | jq -r '.params.gvg_staking_per_bytes // empty' 2>/dev/null)
@@ -32,9 +31,8 @@ SP_JSON=$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2
 NUM_SPS=$(echo "$SP_JSON" | jq '.sps | length // 0' 2>/dev/null || echo "0")
 
 if [ "$NUM_SPS" -le 0 ]; then
-  echo "  No SPs registered — skipping GVG queries"
-  echo "PASS: Virtualgroup params queried"
-  exit 0
+  echo "  FAIL: no SPs registered — GVG queries have nothing to verify"
+  exit 1
 fi
 
 # Query global virtual group families

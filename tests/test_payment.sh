@@ -22,7 +22,7 @@ OWNER_ADDR=$(exec_mocad keys show "$TEST_KEY" -a --keyring-backend test 2>/dev/n
 run_moca_cmd_payment() {
   echo "Testing payment module (moca-cmd path)..."
 
-  local default_addr out pa_addr before bal dep_amt after withdraw_amt after2
+  local default_addr out pa_addr before dep_amt after withdraw_amt after2
   default_addr="$(exec_moca_cmd account ls 2>/dev/null | grep -oE '0x[a-fA-F0-9]{40}' | head -1 || true)"
   if [ -z "$default_addr" ]; then
     default_addr="$OWNER_ADDR"
@@ -66,6 +66,10 @@ run_moca_cmd_payment() {
   out=$(exec_moca_cmd payment-account stream-record "$pa_addr" || true)
   after=$(echo "$out" | grep -oE 'Static Balance:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "0")
   echo "  static balance after deposit: $after (before: $before)"
+  if [ "${after:-0}" -le "${before:-0}" ]; then
+    echo "FAIL: static balance did not increase after deposit"
+    exit 1
+  fi
 
   withdraw_amt="500000000000000000"
   print_test_section "withdraw"
@@ -76,6 +80,10 @@ run_moca_cmd_payment() {
   out=$(exec_moca_cmd payment-account stream-record "$pa_addr" || true)
   after2=$(echo "$out" | grep -oE 'Static Balance:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | head -1 || echo "0")
   echo "  static balance after withdraw: $after2"
+  if [ "${after2:-0}" -ge "${after:-0}" ]; then
+    echo "FAIL: static balance did not decrease after withdraw"
+    exit 1
+  fi
 
   exec_moca_cmd payment-account ls --owner "$default_addr" 2>/dev/null | head -8 || true
   echo "PASS: payment module (moca-cmd path)"
@@ -94,15 +102,14 @@ run_mocad_payment() {
     -y 2>/dev/null || echo "FAILED")
 
   if echo "$CREATE_RESULT" | grep -q "FAILED\|Error\|error"; then
-    echo "  WARN: payment account creation failed"
-    echo "PASS: payment module tested (creation attempted)"
-    exit 0
+    echo "  FAIL: payment account creation failed: $CREATE_RESULT"
+    exit 1
   fi
   wait_for_tx 5
 
   if [ -z "$OWNER_ADDR" ]; then
-    echo "PASS: payment create ok (no owner for list)"
-    exit 0
+    echo "  FAIL: cannot resolve owner address to verify created account"
+    exit 1
   fi
 
   ACCOUNTS=$(exec_mocad query payment get-payment-accounts-by-owner "$OWNER_ADDR" \
@@ -111,8 +118,8 @@ run_mocad_payment() {
   echo "  payment accounts for owner: $NUM_ACCOUNTS"
 
   if [ "$NUM_ACCOUNTS" -le 0 ]; then
-    echo "PASS: payment module tested"
-    exit 0
+    echo "  FAIL: created payment account not returned by get-payment-accounts-by-owner"
+    exit 1
   fi
 
   PA_ADDR=$(echo "$ACCOUNTS" | jq -r '.payment_accounts[0]' 2>/dev/null)
@@ -132,13 +139,20 @@ run_mocad_payment() {
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
     --gas auto --gas-adjustment 1.5 \
-    -y 2>/dev/null || echo "  WARN: deposit may have failed"
+    -y 2>/dev/null || {
+    echo "  FAIL: deposit tx broadcast failed"
+    exit 1
+  }
   wait_for_tx 5
 
   STREAM_AFTER=$(exec_mocad query payment stream-record "$PA_ADDR" \
     --node "$TM_RPC" --output json 2>/dev/null || echo "")
   BALANCE_AFTER=$(echo "$STREAM_AFTER" | jq -r '.stream_record.static_balance // "0"' 2>/dev/null)
-  echo "  stream balance after deposit: $BALANCE_AFTER"
+  echo "  stream balance after deposit: $BALANCE_AFTER (before: $BALANCE)"
+  if [ "${BALANCE_AFTER:-0}" -le "${BALANCE:-0}" ]; then
+    echo "  FAIL: static balance did not increase after deposit"
+    exit 1
+  fi
 
   WITHDRAW_AMOUNT="500000000000000000"
   exec_mocad tx payment withdraw "$PA_ADDR" "${WITHDRAW_AMOUNT}" \
@@ -147,8 +161,20 @@ run_mocad_payment() {
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
     --gas auto --gas-adjustment 1.5 \
-    -y 2>/dev/null || echo "  WARN: withdraw may have failed"
+    -y 2>/dev/null || {
+    echo "  FAIL: withdraw tx broadcast failed"
+    exit 1
+  }
   wait_for_tx 3
+
+  STREAM_FINAL=$(exec_mocad query payment stream-record "$PA_ADDR" \
+    --node "$TM_RPC" --output json 2>/dev/null || echo "")
+  BALANCE_FINAL=$(echo "$STREAM_FINAL" | jq -r '.stream_record.static_balance // "0"' 2>/dev/null)
+  echo "  stream balance after withdraw: $BALANCE_FINAL"
+  if [ "${BALANCE_FINAL:-0}" -ge "${BALANCE_AFTER:-0}" ]; then
+    echo "  FAIL: static balance did not decrease after withdraw"
+    exit 1
+  fi
 
   echo "PASS: payment module operations tested (mocad path)"
 }

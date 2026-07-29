@@ -29,6 +29,7 @@ EVM_WS_BASE=$(yq '.ports.evm_ws_base' "$TOPOLOGY")
 P2P_BASE=$(yq '.ports.p2p_base' "$TOPOLOGY")
 SP_GW_BASE=$(yq '.ports.sp_gateway_base' "$TOPOLOGY")
 SP_P2P_BASE=$(yq '.ports.sp_p2p_base' "$TOPOLOGY")
+SP_PROBE_BASE=$(yq '.ports.sp_probe_base // 9502' "$TOPOLOGY")
 
 # Count validators and SPs
 NUM_VALIDATORS=$(yq '.validators | length' "$TOPOLOGY")
@@ -153,6 +154,7 @@ for i in $(seq 0 $((NUM_SPS - 1))); do
   NAME=$(yq ".storage_providers[$i].name" "$TOPOLOGY")
   GW_PORT=$((SP_GW_BASE + i))
   P2P_PORT=$((SP_P2P_BASE + i * 100))
+  PROBE_PORT=$((SP_PROBE_BASE + i))
 
   cat >> "$OUTPUT" <<SP
   # === Storage Provider $i ===
@@ -177,6 +179,7 @@ for i in $(seq 0 $((NUM_SPS - 1))); do
     ports:
       - "${GW_PORT}:9033"
       - "${P2P_PORT}:9400"
+      - "${PROBE_PORT}:9402"
     depends_on:
       mysql:
         condition: service_healthy

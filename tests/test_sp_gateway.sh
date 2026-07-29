@@ -21,25 +21,34 @@ if [ "$ENV" = "local" ]; then
   # Local: probe every sp-N container the stack defines (docker ps -a, so a
   # stopped SP fails instead of shrinking the denominator). curl -w prints 000
   # itself on connect failure, so a ||-appended fallback would yield "000000"
-  # and count dead gateways as reachable.
+  # and count dead gateways as reachable. Health/ready live on the probe
+  # server (container port 9402, host SP_PROBE_BASE+i), not the gater; both
+  # return empty bodies, so assert HTTP codes. Bases match topology defaults.
   SP_GW_BASE=9033
+  SP_PROBE_BASE=9502
   ALL_SPS=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E '^sp-[0-9]+$' | sort -t- -k2 -n)
   for name in $ALL_SPS; do
     i=${name#sp-}
     PORT=$((SP_GW_BASE + i))
-    URL="http://localhost:${PORT}"
+    PROBE=$((SP_PROBE_BASE + i))
     CHECKED=$((CHECKED + 1))
     if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$name"; then
       echo "  SP $i (localhost:$PORT): container not running"
       FAILED=$((FAILED + 1))
       continue
     fi
-    STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "${URL}/status" 2>/dev/null || true)
+    STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "http://localhost:${PORT}/status" 2>/dev/null || true)
     STATUS_CODE="${STATUS_CODE:-000}"
-    HEALTH=$(curl -sf --connect-timeout 3 "${URL}/-/healthy" 2>/dev/null || echo "")
-    READY=$(curl -sf --connect-timeout 3 "${URL}/-/ready" 2>/dev/null || echo "")
-    echo "  SP $i (localhost:$PORT): status_code=$STATUS_CODE health=${HEALTH:-N/A} ready=${READY:-N/A}"
-    [ "$STATUS_CODE" != "000" ] && PASSED=$((PASSED + 1)) || FAILED=$((FAILED + 1))
+    HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "http://localhost:${PROBE}/-/healthy" 2>/dev/null || true)
+    HEALTH_CODE="${HEALTH_CODE:-000}"
+    READY_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "http://localhost:${PROBE}/-/ready" 2>/dev/null || true)
+    READY_CODE="${READY_CODE:-000}"
+    echo "  SP $i (gw localhost:$PORT probe localhost:$PROBE): status_code=$STATUS_CODE healthy=$HEALTH_CODE ready=$READY_CODE"
+    if [ "$STATUS_CODE" != "000" ] && [ "$HEALTH_CODE" = "200" ] && [ "$READY_CODE" = "200" ]; then
+      PASSED=$((PASSED + 1))
+    else
+      FAILED=$((FAILED + 1))
+    fi
   done
 else
   # Remote: get endpoints from chain and probe them

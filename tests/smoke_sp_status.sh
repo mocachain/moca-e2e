@@ -14,19 +14,16 @@ fi
 echo "Checking storage providers at $REST..."
 
 # Query storage providers from the SP module
-RESPONSE=$(curl -sf "${REST}/greenfield/sp/storage_providers" 2>/dev/null) || {
-  # Fallback: try alternate endpoint
-  RESPONSE=$(curl -sf "${REST}/mocachain/storage/providers" 2>/dev/null) || {
-    echo "WARN: Cannot query storage providers (endpoint may not exist yet)"
-    exit 0
-  }
+RESPONSE=$(curl -sf "${REST}/moca/storage_providers" 2>/dev/null) || {
+  echo "FAIL: cannot query storage providers via REST"
+  exit 1
 }
 
-NUM_SPS=$(echo "$RESPONSE" | jq '.sps | length // .storage_providers | length // 0')
+NUM_SPS=$(echo "$RESPONSE" | jq '.sps | length // 0')
 
 if [ "$NUM_SPS" -le 0 ]; then
-  echo "WARN: No storage providers found on chain"
-  exit 0
+  echo "FAIL: no storage providers found on chain"
+  exit 1
 fi
 
 echo "PASS: $NUM_SPS storage providers registered on chain"

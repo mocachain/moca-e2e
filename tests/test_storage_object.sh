@@ -91,9 +91,8 @@ run_moca_cmd_object_full() {
   local out
   out=$(moca_cmd_tx bucket create --primarySP "$PRIMARY_SP" --tags="$tags" "$bucket_url" || true)
   if ! echo "$out" | grep -q "make_bucket:\|$bucket_name"; then
-    echo "WARN: bucket create output unexpected"
-    trap - EXIT
-    exit 0
+    echo "FAIL: bucket create output unexpected: $(echo "$out" | head -3)"
+    exit 1
   fi
 
   print_test_section "Step 2: put object (blocks until SEALED)"
@@ -111,12 +110,12 @@ run_moca_cmd_object_full() {
   print_test_section "Step 3: object head"
   out=$(exec_moca_cmd object head "$object_path" || true)
   if ! echo "$out" | grep -q "object_name:\"$object_name\""; then
-    echo "WARN: object head missing object name"
-    trap - EXIT
-    exit 0
+    echo "FAIL: object head missing object name"
+    exit 1
   fi
   if ! echo "$out" | grep -q "bucket_name:\"$bucket_name\""; then
-    echo "WARN: object head missing bucket name"
+    echo "FAIL: object head missing bucket name"
+    exit 1
   fi
   print_success "object head fields present"
 

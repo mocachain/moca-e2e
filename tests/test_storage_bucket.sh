@@ -100,9 +100,8 @@ run_moca_cmd_bucket_full() {
   local out
   out=$(exec_moca_cmd_signed bucket create --tags="$tags" --primarySP "$PRIMARY_SP" "$bucket_url" || true)
   if ! echo "$out" | grep -q "make_bucket:\|$bucket_name"; then
-    echo "  WARN: create output unexpected: $(echo "$out" | head -3)"
-    trap - EXIT
-    exit 0
+    echo "  FAIL: bucket create output unexpected: $(echo "$out" | head -3)"
+    exit 1
   fi
   wait_for_tx 5
 

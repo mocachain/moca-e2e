@@ -152,9 +152,11 @@ sed -i "s|BlsPrivateKey = '.*'|BlsPrivateKey = '${BLS_KEY}'|g" config.toml
 sed -i "s|HTTPAddress = '.*'|HTTPAddress = '0.0.0.0:9033'|g" config.toml
 sed -i "s|DomainName = '.*'|DomainName = '${SP_NAME}:9033'|g" config.toml
 
-# Patch config: Monitor (metrics on 0.0.0.0 for observability)
+# Patch config: Monitor (metrics/probe on 0.0.0.0 for observability; pprof
+# must stay on loopback — moca-sp refuses to start on a routable pprof bind,
+# and nothing maps 9401 to the host anyway)
 sed -i "s|MetricsHTTPAddress = '.*'|MetricsHTTPAddress = '0.0.0.0:9400'|g" config.toml
-sed -i "s|PProfHTTPAddress = '.*'|PProfHTTPAddress = '0.0.0.0:9401'|g" config.toml
+sed -i "s|PProfHTTPAddress = '.*'|PProfHTTPAddress = '127.0.0.1:9401'|g" config.toml
 sed -i "s|ProbeHTTPAddress = '.*'|ProbeHTTPAddress = '0.0.0.0:9402'|g" config.toml
 
 # Patch config: SpDB (User, Passwd, Address, Database)

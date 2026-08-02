@@ -44,7 +44,10 @@ if [ "$ENV" = "local" ]; then
     READY_CODE=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "http://localhost:${PROBE}/-/ready" 2>/dev/null || true)
     READY_CODE="${READY_CODE:-000}"
     echo "  SP $i (gw localhost:$PORT probe localhost:$PROBE): status_code=$STATUS_CODE healthy=$HEALTH_CODE ready=$READY_CODE"
-    if [ "$STATUS_CODE" != "000" ] && [ "$HEALTH_CODE" = "200" ] && [ "$READY_CODE" = "200" ]; then
+    # Unauthenticated /status must be rejected: 400 (unsigned request) or 401
+    # (not in StatusAllowedAccounts). 200 means the endpoint is serving anyone
+    # again; 000/5xx means the gater is down.
+    if { [ "$STATUS_CODE" = "400" ] || [ "$STATUS_CODE" = "401" ]; } && [ "$HEALTH_CODE" = "200" ] && [ "$READY_CODE" = "200" ]; then
       PASSED=$((PASSED + 1))
     else
       FAILED=$((FAILED + 1))

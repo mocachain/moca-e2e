@@ -8,6 +8,12 @@ permissions:
   contents: write
   pull-requests: write
 
+# Serialize dispatches: two source repos merging near-simultaneously must not
+# race on the rolling branch (last writer would win and drop the other bump).
+concurrency:
+  group: stack-update
+  cancel-in-progress: false
+
 env:
   ROLLING_BRANCH: auto/stack-update
 
@@ -26,24 +32,52 @@ jobs:
           sudo chmod +x /usr/local/bin/yq
 
       - name: Update stack.yaml
+        env:
+          GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
         run: |
           REPO="${{ github.event.client_payload.repo }}"
           SHA="${{ github.event.client_payload.sha }}"
-          COMPONENT=$(echo "$REPO" | cut -d'/' -f2)
 
-          echo "Updating $COMPONENT to $SHA"
+          # Refresh every SHA-pinned component to its repo's current main HEAD.
+          # The rolling branch is rebuilt from main on every dispatch, so
+          # updating only the notifying component would drop any other repo's
+          # not-yet-merged bump. Floating refs (e.g. 'main') clone latest at
+          # build time and are left alone.
+          : > /tmp/stack-changes
+          for COMPONENT in $(yq '.components | keys | .[]' stack.yaml); do
+            REF=$(yq ".components.${COMPONENT}.ref" stack.yaml)
+            if ! echo "$REF" | grep -qE '^[0-9a-f]{40}$'; then
+              continue
+            fi
+            CREPO=$(yq ".components.${COMPONENT}.repo" stack.yaml)
+            HEAD=$(gh api "repos/${CREPO}/commits/main" --jq .sha || true)
+            if ! echo "$HEAD" | grep -qE '^[0-9a-f]{40}$'; then
+              echo "Warning: cannot resolve main HEAD for ${CREPO}, keeping ${REF}"
+              continue
+            fi
+            if [ "$HEAD" != "$REF" ]; then
+              yq -i ".components.${COMPONENT}.ref = \"${HEAD}\"" stack.yaml
+              echo "${COMPONENT}: ${REF} -> ${HEAD}" >> /tmp/stack-changes
+            fi
+          done
 
-          if [ "$(yq ".components.${COMPONENT}" stack.yaml)" = "null" ]; then
-            echo "Warning: component '$COMPONENT' not in stack.yaml, skipping."
-            exit 0
+          # The dispatch payload is authoritative for the notifying repo: the
+          # commits API can lag right after a merge.
+          if [ -n "$REPO" ] && [ -n "$SHA" ]; then
+            COMPONENT=$(echo "$REPO" | cut -d'/' -f2)
+            if [ "$(yq ".components.${COMPONENT}" stack.yaml)" != "null" ]; then
+              CUR=$(yq ".components.${COMPONENT}.ref" stack.yaml)
+              if [ "$CUR" != "$SHA" ] && echo "$CUR" | grep -qE '^[0-9a-f]{40}$'; then
+                yq -i ".components.${COMPONENT}.ref = \"${SHA}\"" stack.yaml
+                echo "${COMPONENT}: ${CUR} -> ${SHA} (dispatch payload)" >> /tmp/stack-changes
+              fi
+            else
+              echo "Note: dispatching repo '$COMPONENT' not in stack.yaml."
+            fi
           fi
 
-          OLD_REF=$(yq ".components.${COMPONENT}.ref" stack.yaml)
-          yq -i ".components.${COMPONENT}.ref = \"${SHA}\"" stack.yaml
-          echo "Updated $COMPONENT: $OLD_REF -> $SHA"
-
-          echo "COMPONENT=$COMPONENT" >> $GITHUB_ENV
-          echo "SHA=$SHA" >> $GITHUB_ENV
+          echo "=== Changes ==="
+          cat /tmp/stack-changes || true
 
       - name: Check for changes
         id: changes
@@ -61,7 +95,8 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -B "$ROLLING_BRANCH"
           git add stack.yaml
-          git commit -m "chore: update ${{ env.COMPONENT }} to ${{ env.SHA }}"
+          git commit -m "chore: update stack pointer to latest mains" \
+            -m "$(cat /tmp/stack-changes)"
           git push --force origin "$ROLLING_BRANCH"
 
       - name: Create or update PR

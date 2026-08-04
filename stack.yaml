@@ -5,10 +5,10 @@
 components:
   moca:
     repo: mocachain/moca
-    ref: d1a3de51ed2855da0f74e7fc13d7fc6277933181
+    ref: e8f3913f227efc1efb0619a5f8c0f915a3f15a48
   moca-storage-provider:
     repo: mocachain/moca-storage-provider
-    ref: 2fffc3ac2039d16186c149a22c8b66775b9e7bcc
+    ref: 3c8057a7bce257784200ea23cfd42a10392a57d0
   moca-cmd:
     repo: mocachain/moca-cmd
     ref: bbad0b1a51cc450286205fc9a67f2ab6bc1ff9a2

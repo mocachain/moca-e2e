@@ -92,9 +92,19 @@ run_moca_cmd_payment() {
 
 run_mocad_payment() {
   echo "Testing payment module (mocad path)..."
+  # The payment txs derive the signer from --privatekey, not the keyring
+  # --from account. Without it the CLI aborts with "len of Keybytes is not
+  # equal to 32" before broadcasting.
+  local priv
+  priv=$(exec_mocad keys unsafe-export-eth-key "$TEST_KEY" --keyring-backend test 2>/dev/null || echo "")
+  if [ -z "$priv" ]; then
+    echo "  FAIL: cannot export private key for '$TEST_KEY'"
+    exit 1
+  fi
   local CREATE_RESULT
   CREATE_RESULT=$(exec_mocad tx payment create-payment-account \
     --from "$TEST_KEY" \
+    --privatekey "$priv" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -114,7 +124,9 @@ run_mocad_payment() {
 
   ACCOUNTS=$(exec_mocad query payment get-payment-accounts-by-owner "$OWNER_ADDR" \
     --node "$TM_RPC" --output json 2>/dev/null || echo "")
-  NUM_ACCOUNTS=$(echo "$ACCOUNTS" | jq '.payment_accounts | length // 0' 2>/dev/null || echo "0")
+  # Field naming differs across mocad builds: snake_case on the local stack,
+  # camelCase on current remote chains. Same for the stream-record command name.
+  NUM_ACCOUNTS=$(echo "$ACCOUNTS" | jq '(.payment_accounts // .paymentAccounts // []) | length' 2>/dev/null || echo "0")
   echo "  payment accounts for owner: $NUM_ACCOUNTS"
 
   if [ "$NUM_ACCOUNTS" -le 0 ]; then
@@ -122,19 +134,37 @@ run_mocad_payment() {
     exit 1
   fi
 
-  PA_ADDR=$(echo "$ACCOUNTS" | jq -r '.payment_accounts[0]' 2>/dev/null)
+  PA_ADDR=$(echo "$ACCOUNTS" | jq -r '(.payment_accounts // .paymentAccounts // [])[0] // empty' 2>/dev/null)
   echo "  payment account: $PA_ADDR"
 
-  STREAM=$(exec_mocad query payment stream-record "$PA_ADDR" \
-    --node "$TM_RPC" --output json 2>/dev/null || echo "")
-  if [ -n "$STREAM" ]; then
-    BALANCE=$(echo "$STREAM" | jq -r '.stream_record.static_balance // "0"' 2>/dev/null)
-    echo "  stream balance: $BALANCE"
-  fi
+  # Read the stream record via LCD when configured: the CLI ABCI path decodes
+  # with the local binary's proto and silently yields an empty record when it
+  # does not match the remote chain's version. Fall back to the CLI, whose
+  # command is show-stream-record on current builds, stream-record on older
+  # ones; no record exists until the first deposit either way.
+  query_stream_balance() {
+    local rec bal
+    rec=""
+    if [ -n "${REST:-}" ]; then
+      rec=$(curl -sf "${REST}/moca/payment/stream_record/$1" 2>/dev/null || echo "")
+    fi
+    if [ -z "$rec" ]; then
+      rec=$(exec_mocad query payment show-stream-record "$1" --node "$TM_RPC" --output json 2>/dev/null \
+        || exec_mocad query payment stream-record "$1" --node "$TM_RPC" --output json 2>/dev/null \
+        || echo "")
+    fi
+    # jq on empty input prints nothing and exits 0, so default via the shell
+    bal=$(echo "$rec" | jq -r '.stream_record.static_balance // .streamRecord.staticBalance // empty' 2>/dev/null)
+    echo "${bal:-0}"
+  }
+
+  BALANCE=$(query_stream_balance "$PA_ADDR")
+  echo "  stream balance: $BALANCE"
 
   DEPOSIT_AMOUNT="1000000000000000000"
   exec_mocad tx payment deposit "$PA_ADDR" "${DEPOSIT_AMOUNT}" \
     --from "$TEST_KEY" \
+    --privatekey "$priv" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -145,9 +175,7 @@ run_mocad_payment() {
   }
   wait_for_tx 5
 
-  STREAM_AFTER=$(exec_mocad query payment stream-record "$PA_ADDR" \
-    --node "$TM_RPC" --output json 2>/dev/null || echo "")
-  BALANCE_AFTER=$(echo "$STREAM_AFTER" | jq -r '.stream_record.static_balance // "0"' 2>/dev/null)
+  BALANCE_AFTER=$(query_stream_balance "$PA_ADDR")
   echo "  stream balance after deposit: $BALANCE_AFTER (before: $BALANCE)"
   if [ "${BALANCE_AFTER:-0}" -le "${BALANCE:-0}" ]; then
     echo "  FAIL: static balance did not increase after deposit"
@@ -157,6 +185,7 @@ run_mocad_payment() {
   WITHDRAW_AMOUNT="500000000000000000"
   exec_mocad tx payment withdraw "$PA_ADDR" "${WITHDRAW_AMOUNT}" \
     --from "$TEST_KEY" \
+    --privatekey "$priv" \
     --keyring-backend test \
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
@@ -167,9 +196,7 @@ run_mocad_payment() {
   }
   wait_for_tx 3
 
-  STREAM_FINAL=$(exec_mocad query payment stream-record "$PA_ADDR" \
-    --node "$TM_RPC" --output json 2>/dev/null || echo "")
-  BALANCE_FINAL=$(echo "$STREAM_FINAL" | jq -r '.stream_record.static_balance // "0"' 2>/dev/null)
+  BALANCE_FINAL=$(query_stream_balance "$PA_ADDR")
   echo "  stream balance after withdraw: $BALANCE_FINAL"
   if [ "${BALANCE_FINAL:-0}" -ge "${BALANCE_AFTER:-0}" ]; then
     echo "  FAIL: static balance did not decrease after withdraw"

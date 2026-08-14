@@ -62,6 +62,16 @@ jq --arg period "$GOV_VOTING_PERIOD" --arg deposit "$GOV_MIN_DEPOSIT" --arg expe
   .app_state.gov.deposit_params.min_deposit = [{"denom": $denom, "amount": $deposit}]
 ' "$GENESIS" > "$TMPFILE" && mv "$TMPFILE" "$GENESIS"
 
+# Shorten the challenge deposit lock so SP exit completes within the test window.
+# moca holds an exiting SP's deposit until every challenge that can name it has
+# lapsed (challenge_keep_alive_period blocks). The chain auto-raises one challenge
+# per block and the e2e runs no attester, so with the 300-block default the lock
+# outlives the sp-exit tests' wait. Five blocks lets the lock clear a few blocks
+# after GVG migration while keeping auto-challenge active.
+jq '
+  .app_state.challenge.params.challenge_keep_alive_period = "5"
+' "$GENESIS" > "$TMPFILE" && mv "$TMPFILE" "$GENESIS"
+
 # Set block time (consensus params)
 jq --arg bt "$BLOCK_TIME" '
   .consensus.params.block.time_iota_ms = "500"

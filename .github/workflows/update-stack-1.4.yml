@@ -31,9 +31,13 @@ concurrency:
 env:
   ROLLING_BRANCH: auto/stack-update-1.4
   STACK_FILE: stack-1.4.yaml
+  # moca-storage-provider's release branch (moca is pinned to the v1.4.0-rc1 tag
+  # and is bumped by hand when a new rc is cut, so it is not auto-rolled here).
+  # Note moca's release branch was renamed release/1.4.x -> release/v1.4.x, while
+  # SP's stayed release/1.4.x — hence a single SP-only rolling component.
   RELEASE_BRANCH: release/1.4.x
   # Components that track the release branch and roll forward automatically.
-  ROLLING_COMPONENTS: "moca moca-storage-provider"
+  ROLLING_COMPONENTS: "moca-storage-provider"
 
 jobs:
   update:

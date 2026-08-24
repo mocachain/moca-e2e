@@ -62,13 +62,19 @@ jq --arg period "$GOV_VOTING_PERIOD" --arg deposit "$GOV_MIN_DEPOSIT" --arg expe
   .app_state.gov.deposit_params.min_deposit = [{"denom": $denom, "amount": $deposit}]
 ' "$GENESIS" > "$TMPFILE" && mv "$TMPFILE" "$GENESIS"
 
-# Shorten the challenge deposit lock so SP exit completes within the test window.
-# moca holds an exiting SP's deposit until every challenge that can name it has
-# lapsed (challenge_keep_alive_period blocks). The chain auto-raises one challenge
-# per block and the e2e runs no attester, so with the 300-block default the lock
-# outlives the sp-exit tests' wait. Five blocks lets the lock clear a few blocks
-# after GVG migration while keeping auto-challenge active.
+# Stop auto-raising challenges so an exiting SP can complete its exit.
+# moca (#409) holds an exiting SP's deposit until every open challenge that
+# names it has lapsed (challenge_keep_alive_period blocks). challenge_count_per_
+# block auto-raises challenges every block with no attester to settle them, and
+# SetDepositLockUntil is a forward-only watermark: while the SP still holds any
+# object (it is a secondary in the auxiliary bucket right up to swap-out), each
+# block re-arms the lock to height+keep_alive, so the window never lapses and
+# sp.complete.exit reverts. Shortening keep_alive alone does not help because the
+# lock is continuously renewed. No suite test exercises auto-raised challenges, so
+# disable them; test_challenge* can re-enable locally if added. keep_alive stays a
+# small non-zero value (the module rejects zero) for a hand-raised challenge.
 jq '
+  .app_state.challenge.params.challenge_count_per_block = "0" |
   .app_state.challenge.params.challenge_keep_alive_period = "5"
 ' "$GENESIS" > "$TMPFILE" && mv "$TMPFILE" "$GENESIS"
 

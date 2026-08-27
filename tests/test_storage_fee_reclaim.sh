@@ -2,6 +2,9 @@
 # E2E: storage fee lifecycle — fees stream while an object is stored, stop on
 # delete, and the unstreamed deposit is reclaimable from the payment account.
 # Pins the "no prepaid term" model: deposit -> store -> delete -> withdraw.
+# Every mutation is verified on-chain (EVM receipt status / cosmos tx code /
+# state gone), not just broadcast: moca-cmd swallows DeleteObject failures and
+# does not wait for the EVM CreateBucket receipt at all.
 # shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 
@@ -89,6 +92,64 @@ bank_balance() { # $1=address
     jq -r '.balances[] | select(.denom=="amoca") | .amount' 2>/dev/null || echo "0"
 }
 
+# Tx success gate. Depending on the operation, moca-cmd/go-sdk submits either
+# an EVM-precompile tx (bucket create, payment ops) or a plain cosmos tx, and
+# for some ops it swallows a failed result (DeleteObject) or never waits for
+# inclusion at all (bucket create). Take the last hash the command printed and
+# require a confirmed success in whichever lane it landed: EVM receipt with
+# status 0x1, or cosmos tx with code 0. An explicit revert / non-zero code
+# fails immediately.
+assert_tx_ok() { # $1=command output $2=label
+  local out="$1" label="$2" hash rcpt status rec code _i
+  hash=$(echo "$out" | grep -oiE '(0x)?[0-9a-f]{64}' | tail -1 | sed 's/^0x//' || true)
+  if [ -z "$hash" ]; then
+    echo "FAIL: $label: no tx hash found in command output"
+    echo "$out" | tail -4
+    exit 1
+  fi
+  for _i in $(seq 1 15); do
+    rcpt=$(_evm_rpc eth_getTransactionReceipt "[\"0x${hash}\"]")
+    status=$(echo "$rcpt" | jq -r '.status // empty' 2>/dev/null)
+    if [ "$status" = "0x1" ]; then
+      echo "  $label: EVM receipt status=0x1 (0x${hash:0:12}...)"
+      return 0
+    fi
+    if [ "$status" = "0x0" ]; then
+      echo "FAIL: $label: EVM tx 0x${hash} reverted (receipt status 0x0)"
+      exit 1
+    fi
+    rec=$(curl -sf "${RPC}/tx?hash=0x${hash}" 2>/dev/null || echo "")
+    code=$(echo "$rec" | jq -r '.result.tx_result.code // empty' 2>/dev/null)
+    if [ "$code" = "0" ]; then
+      echo "  $label: cosmos code=0 (0x${hash:0:12}...)"
+      return 0
+    fi
+    if [ -n "$code" ]; then
+      echo "FAIL: $label: cosmos tx 0x${hash} failed with code $code"
+      echo "$rec" | jq -r '.result.tx_result.log // empty' 2>/dev/null | head -3
+      exit 1
+    fi
+    sleep 2
+  done
+  echo "FAIL: $label: tx 0x${hash} not found as EVM receipt or cosmos tx"
+  exit 1
+}
+
+# On-chain absence gate for deletes whose CLI output carries no usable hash.
+wait_gone() { # $1=label $2...=mocad query args
+  local label="$1" _i
+  shift
+  for _i in $(seq 1 15); do
+    if ! exec_mocad query "$@" --node "$TM_RPC" --output json >/dev/null 2>&1; then
+      echo "  $label: gone on chain"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "FAIL: $label still exists on chain after deletion"
+  exit 1
+}
+
 BUCKET_NAME="$(generate_bucket_name "e2e-fee")"
 BUCKET_URL="moca://${BUCKET_NAME}"
 OBJECT_NAME="fee_reclaim_object.bin"
@@ -105,11 +166,12 @@ trap cleanup EXIT
 echo "Testing storage fee reclaim (bucket=$BUCKET_NAME, reserve_time=${RESERVE_TIME}s)..."
 
 print_test_section "dedicated payment account"
-exec_moca_cmd_signed payment-account create >/dev/null || {
+OUT=$(exec_moca_cmd_signed payment-account create) || {
   echo "FAIL: payment-account create failed"
   exit 1
 }
-wait_for_block 3
+assert_tx_ok "$OUT" "create payment account"
+wait_for_block 2
 # Newest account is listed last for this owner; prefer the addr:"..." field
 # form, fall back to any bare address in the listing.
 PA_LS=$(exec_moca_cmd payment-account ls --owner "$OWNER_ADDR" 2>/dev/null || true)
@@ -124,21 +186,43 @@ fi
 echo "  payment account: $PA_ADDR"
 
 DEPOSIT="1000000000000000000" # 1 MOCA
-exec_moca_cmd_signed payment-account deposit --toAddress "$PA_ADDR" --amount "$DEPOSIT" >/dev/null || {
+BANK_PRE_DEPOSIT=$(bank_balance "$OWNER_ADDR")
+OUT=$(exec_moca_cmd_signed payment-account deposit --toAddress "$PA_ADDR" --amount "$DEPOSIT") || {
   echo "FAIL: deposit failed"
   exit 1
 }
-wait_for_block 3
+assert_tx_ok "$OUT" "deposit"
+wait_for_block 2
 STATIC_0=$(query_stream_field "$PA_ADDR" static_balance staticBalance)
-if [ "${STATIC_0:-0}" -lt "$DEPOSIT" ]; then
-  echo "FAIL: deposit not reflected in static balance (got $STATIC_0)"
+BANK_POST_DEPOSIT=$(bank_balance "$OWNER_ADDR")
+# A fresh account with no flows holds the deposit exactly.
+if [ "${STATIC_0:-0}" -ne "$DEPOSIT" ]; then
+  echo "FAIL: fresh payment account static balance is $STATIC_0, expected exactly $DEPOSIT"
   exit 1
 fi
+# The deposit (plus any gas) left the owner's bank balance. Balances exceed
+# 2^63 and float rounding at 1e26 scale makes awk unreliable, so compare in bc.
+if [ "$(echo "$BANK_PRE_DEPOSIT - $BANK_POST_DEPOSIT >= $DEPOSIT" | bc)" != "1" ]; then
+  echo "FAIL: owner bank did not decrease by the deposit (pre=$BANK_PRE_DEPOSIT post=$BANK_POST_DEPOSIT)"
+  exit 1
+fi
+echo "  deposit reflected: static=$STATIC_0, owner bank down by >= deposit"
 
 print_test_section "store: bucket + sealed object billed to the payment account"
-exec_moca_cmd_signed bucket create --primarySP "$PRIMARY_SP" --paymentAddress "$PA_ADDR" "$BUCKET_URL" >/dev/null
-wait_for_block 3
-# object put without --bypassSeal polls until OBJECT_STATUS_SEALED.
+OUT=$(exec_moca_cmd_signed bucket create --primarySP "$PRIMARY_SP" --paymentAddress "$PA_ADDR" "$BUCKET_URL")
+assert_tx_ok "$OUT" "create bucket"
+wait_for_block 2
+# The bucket must actually bill the dedicated account, on chain.
+BUCKET_PAYMENT=$(exec_mocad query storage head-bucket "$BUCKET_NAME" --node "$TM_RPC" --output json 2>/dev/null |
+  jq -r '.bucket_info.payment_address // .bucketInfo.paymentAddress // empty' 2>/dev/null || true)
+if [ "$(echo "$BUCKET_PAYMENT" | tr 'A-F' 'a-f')" != "$(echo "$PA_ADDR" | tr 'A-F' 'a-f')" ]; then
+  echo "FAIL: bucket payment address is '$BUCKET_PAYMENT', expected $PA_ADDR"
+  exit 1
+fi
+echo "  bucket payment address pinned to the dedicated account"
+
+# object put without --bypassSeal polls until OBJECT_STATUS_SEALED, which is
+# itself the on-chain proof for create + seal.
 exec_moca_cmd_signed object put --contentType "application/octet-stream" "$TEST_FILE" "$OBJECT_REL" >/dev/null || {
   echo "FAIL: object never reached OBJECT_STATUS_SEALED"
   exit 1
@@ -168,16 +252,20 @@ if [ "$WAIT" -gt 0 ]; then
   echo "  waiting ${WAIT}s for the reserve window to lapse..."
   sleep "$WAIT"
 fi
+# moca-cmd prints no hash for DeleteObject and swallows a failed tx result, so
+# gate on the object actually disappearing from chain state.
 exec_moca_cmd_signed object rm "$OBJECT_REL" >/dev/null || {
   echo "FAIL: object rm failed"
   exit 1
 }
-wait_for_block 3
-exec_moca_cmd_signed bucket rm "$BUCKET_URL" >/dev/null || {
+wait_gone "object" storage head-object "$BUCKET_NAME" "$OBJECT_NAME"
+OUT=$(exec_moca_cmd_signed bucket rm "$BUCKET_URL") || {
   echo "FAIL: bucket rm failed"
   exit 1
 }
-wait_for_block 3
+assert_tx_ok "$OUT" "delete bucket"
+wait_gone "bucket" storage head-bucket "$BUCKET_NAME"
+wait_for_block 2
 
 NETFLOW_AFTER=$(query_stream_field "$PA_ADDR" netflow_rate netflowRate)
 LOCK_AFTER=$(query_stream_field "$PA_ADDR" lock_balance lockBalance)
@@ -191,8 +279,14 @@ if [ "${LOCK_AFTER:-1}" != "0" ]; then
   echo "FAIL: lock balance should be 0 after deletion, got '$LOCK_AFTER'"
   exit 1
 fi
-# Only the stored seconds (plus 1% validator tax on them) were consumed; the
-# 60s window for a tiny object is dust against the 1 MOCA deposit.
+# Storage was not free: the stored window (>= reserve_time) must have consumed
+# something...
+if [ "${STATIC_AFTER:-0}" -ge "$DEPOSIT" ]; then
+  echo "FAIL: static balance did not decrease at all ($STATIC_AFTER); storage was never charged"
+  exit 1
+fi
+# ...but only the stored seconds (plus 1% validator tax on them); the reserve
+# window for a tiny object is dust against the 1 MOCA deposit.
 MIN_REMAINING="900000000000000000" # 0.9 MOCA
 if [ "${STATIC_AFTER:-0}" -lt "$MIN_REMAINING" ]; then
   echo "FAIL: expected >=90% of the deposit to remain, got $STATIC_AFTER"
@@ -202,11 +296,12 @@ fi
 print_test_section "reclaim: withdraw the unstreamed deposit"
 BANK_BEFORE=$(bank_balance "$OWNER_ADDR")
 WITHDRAW="500000000000000000" # 0.5 MOCA, under the 100 MOCA timelock threshold
-exec_moca_cmd_signed payment-account withdraw --fromAddress "$PA_ADDR" --amount "$WITHDRAW" >/dev/null || {
+OUT=$(exec_moca_cmd_signed payment-account withdraw --fromAddress "$PA_ADDR" --amount "$WITHDRAW") || {
   echo "FAIL: withdraw failed"
   exit 1
 }
-wait_for_block 3
+assert_tx_ok "$OUT" "withdraw"
+wait_for_block 2
 STATIC_FINAL=$(query_stream_field "$PA_ADDR" static_balance staticBalance)
 BANK_AFTER=$(bank_balance "$OWNER_ADDR")
 echo "  static_balance=$STATIC_FINAL bank: $BANK_BEFORE -> $BANK_AFTER"
@@ -215,10 +310,11 @@ if [ "${STATIC_FINAL:-0}" -ne "$EXPECTED_STATIC" ]; then
   echo "FAIL: static balance after withdraw is $STATIC_FINAL, expected $EXPECTED_STATIC"
   exit 1
 fi
-# Owner's bank balance grows by the withdrawal minus tx gas; balances exceed
-# int64 so compare in awk. Require at least half the withdrawal to net out.
-if ! awk -v before="$BANK_BEFORE" -v after="$BANK_AFTER" -v w="$WITHDRAW" \
-  'BEGIN { exit !(after - before >= w / 2) }'; then
+# The withdrawal lands in the owner's bank minus tx gas; on this stack gas is
+# well under 0.01 MOCA, so require the delta within that of the full amount
+# (bc: balances exceed 2^63 and float rounding makes awk unreliable).
+GAS_ALLOWANCE="10000000000000000" # 0.01 MOCA
+if [ "$(echo "$BANK_AFTER - $BANK_BEFORE >= $WITHDRAW - $GAS_ALLOWANCE" | bc)" != "1" ]; then
   echo "FAIL: owner bank balance did not receive the withdrawal (before=$BANK_BEFORE after=$BANK_AFTER)"
   exit 1
 fi

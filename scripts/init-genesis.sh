@@ -69,10 +69,11 @@ jq --arg period "$GOV_VOTING_PERIOD" --arg deposit "$GOV_MIN_DEPOSIT" --arg expe
 # SetDepositLockUntil is a forward-only watermark: while the SP still holds any
 # object (it is a secondary in the auxiliary bucket right up to swap-out), each
 # block re-arms the lock to height+keep_alive, so the window never lapses and
-# sp.complete.exit reverts. Shortening keep_alive alone does not help because the
-# lock is continuously renewed. No suite test exercises auto-raised challenges, so
-# disable them; test_challenge* can re-enable locally if added. keep_alive stays a
-# small non-zero value (the module rejects zero) for a hand-raised challenge.
+# sp.complete.exit reverts. Shortening keep_alive alone (from #88) does not help
+# because the lock is continuously renewed. No suite test exercises auto-raised
+# challenges, so disable them; test_challenge* can re-enable locally if added.
+# keep_alive stays at a small non-zero value (the module rejects zero) in case a
+# future test raises a challenge by hand.
 jq '
   .app_state.challenge.params.challenge_count_per_block = "0" |
   .app_state.challenge.params.challenge_keep_alive_period = "5"

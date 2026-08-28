@@ -1,0 +1,37 @@
+# Known-good stack pointer — release/1.4 line
+# Each entry represents a tested, working combination of commits for the moca
+# v1.4 release line. Only updated automatically when E2E tests pass.
+#
+# moca and moca-storage-provider track their release/1.4.x branches (the rolling
+# components). moca-cmd, moca-juno and the SDK forks are pinned to the exact refs
+# that moca-storage-provider's release/1.4.x go.mod resolves to, so the CLI and
+# indexer stay proto-compatible with the 1.4 chain. Only moca, moca-storage-
+# provider and moca-cmd are built into images; juno and the forks are recorded
+# for provenance (juno compiles into moca-sp via go.mod; the SDK forks are pulled
+# from each repo's own go.mod, not wired in from here).
+
+components:
+  moca:
+    repo: mocachain/moca
+    ref: 54a13d2ea87626f366426738bcf976ead21c0336
+  moca-storage-provider:
+    repo: mocachain/moca-storage-provider
+    ref: 6f21aeac0de06ceaa6b7084e104039fd0d551216
+  moca-cmd:
+    repo: mocachain/moca-cmd
+    ref: 806a8738ff54f8723456a24b396bedf17812953c
+  moca-juno:
+    repo: mocachain/moca-juno
+    ref: b1f1e6fd4e65c64fd59d8a7fd1e81f1b9e1b16a4
+  moca-common:
+    repo: mocachain/moca-common
+    ref: de7b6add70a3c9aa216dda6f3e612da28b23ae40
+  moca-go-sdk:
+    repo: mocachain/moca-go-sdk
+    ref: d578d73e25990488edd922732d6dfdc12d02c8b4
+  moca-cosmos-sdk:
+    repo: mocachain/moca-cosmos-sdk
+    ref: 0edb2e9d600f5e6c470cff1ddb08f2060f90054e
+  moca-cometbft:
+    repo: mocachain/moca-cometbft
+    ref: 83994359d4432dfdb729414a5c07359e5589e82f

@@ -86,8 +86,11 @@ docker_image moca-sp-local:latest sp "$SP_SHA" \
   -f "$ROOT_DIR/docker/Dockerfile.sp" --build-arg TARGETARCH="$ARCH" $TOKEN_ARG "$ROOT_DIR"
 
 # genesis-init COPYs --from=mocad-local:latest, present in the daemon from the
-# mocad step above (built or pulled). Key it on the moca commit too.
-docker_image moca-genesis-init:latest genesis-init "$MOCA_SHA" \
+# mocad step above (built or pulled). Key it on the moca commit too — and on
+# scripts/init-genesis.sh, which is baked into the image but lives outside the
+# docker/ recipe tree, so genesis changes rebuild instead of pulling stale.
+GENESIS_HASH="$(git -C "$ROOT_DIR" rev-parse --short=12 "HEAD:scripts/init-genesis.sh" 2>/dev/null || echo g0)"
+docker_image moca-genesis-init:latest genesis-init "${MOCA_SHA}-${GENESIS_HASH}" \
   -f "$ROOT_DIR/docker/Dockerfile.init" "$ROOT_DIR"
 
 docker_image moca-cmd-local:latest moca-cmd "$CMD_SHA" \

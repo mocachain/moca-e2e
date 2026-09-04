@@ -1,0 +1,124 @@
+name: Update Stack (1.4)
+
+# Rolling updater for the moca v1.4 release line. Refreshes stack-1.4.yaml's
+# rolling components (moca, moca-storage-provider) to their release/1.4.x HEADs
+# and opens/updates the auto/stack-update-1.4 PR. Test Stack (1.4) runs on that
+# PR; Advance Stack Pointer (1.4) merges it on green.
+#
+# moca-cmd, moca-juno and the SDK forks stay pinned to the exact refs that
+# moca-storage-provider's release/1.4.x go.mod resolves to — they change only
+# when that go.mod does, via a manual edit to stack-1.4.yaml.
+
+on:
+  # Poll release/1.4.x every 20 minutes (self-contained; no source-repo hook
+  # required). Runs this whole week while the 1.4 line is under active debugging.
+  schedule:
+    - cron: '*/20 * * * *'
+  # Also accept an explicit push notification from moca / moca-storage-provider
+  # release/1.4.x, if their notify-e2e workflow is extended to send it.
+  repository_dispatch:
+    types: [repo-updated-1.4]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: stack-update-1.4
+  cancel-in-progress: false
+
+env:
+  ROLLING_BRANCH: auto/stack-update-1.4
+  STACK_FILE: stack-1.4.yaml
+  # moca-storage-provider's release branch (moca is pinned to the v1.4.0-rc1 tag
+  # and is bumped by hand when a new rc is cut, so it is not auto-rolled here).
+  # Note moca's release branch was renamed release/1.4.x -> release/v1.4.x, while
+  # SP's stayed release/1.4.x — hence a single SP-only rolling component.
+  RELEASE_BRANCH: release/1.4.x
+  # Components that track the release branch and roll forward automatically.
+  ROLLING_COMPONENTS: "moca-storage-provider"
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          token: ${{ secrets.E2E_HUB_PAT }}
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Refresh rolling components to release/1.4.x HEAD
+        env:
+          GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
+        run: |
+          : > /tmp/stack-changes
+          for COMPONENT in $ROLLING_COMPONENTS; do
+            if [ "$(yq ".components.${COMPONENT}" "$STACK_FILE")" = "null" ]; then
+              echo "Warning: ${COMPONENT} not in ${STACK_FILE}, skipping."
+              continue
+            fi
+            REF=$(yq ".components.${COMPONENT}.ref" "$STACK_FILE")
+            CREPO=$(yq ".components.${COMPONENT}.repo" "$STACK_FILE")
+            HEAD=$(gh api "repos/${CREPO}/commits/${RELEASE_BRANCH}" --jq .sha || true)
+            if ! echo "$HEAD" | grep -qE '^[0-9a-f]{40}$'; then
+              echo "Warning: cannot resolve ${RELEASE_BRANCH} HEAD for ${CREPO}, keeping ${REF}"
+              continue
+            fi
+            if [ "$HEAD" != "$REF" ]; then
+              yq -i ".components.${COMPONENT}.ref = \"${HEAD}\"" "$STACK_FILE"
+              echo "${COMPONENT}: ${REF} -> ${HEAD}" >> /tmp/stack-changes
+            fi
+          done
+          echo "=== Changes ==="
+          cat /tmp/stack-changes || true
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet "$STACK_FILE"; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Force-push rolling branch
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$ROLLING_BRANCH"
+          git add "$STACK_FILE"
+          git commit -m "chore: update 1.4 stack pointer to release/1.4.x HEAD" \
+            -m "$(cat /tmp/stack-changes)"
+          git push --force origin "$ROLLING_BRANCH"
+
+      - name: Create or update PR
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.E2E_HUB_PAT }}
+        run: |
+          EXISTING_PR=$(gh pr list --head "$ROLLING_BRANCH" --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING_PR" ]; then
+            echo "Rolling PR #$EXISTING_PR updated via force-push."
+          else
+            gh pr create \
+              --title "chore: update known-good stack pointer (1.4)" \
+              --body "$(cat <<'EOF'
+          ## Auto-generated rolling PR — release/1.4 line
+
+          Updates `stack-1.4.yaml` with the latest release/1.4.x refs of moca and
+          moca-storage-provider. moca-cmd, moca-juno and the SDK forks stay pinned
+          to the refs moca-storage-provider's release/1.4.x go.mod resolves to.
+
+          **Do not manually merge** — Advance Stack Pointer (1.4) handles this on green CI.
+          EOF
+            )" \
+              --head "$ROLLING_BRANCH" \
+              --base main
+          fi

@@ -79,6 +79,16 @@ jq '
   .app_state.challenge.params.challenge_keep_alive_period = "5"
 ' "$GENESIS" > "$TMPFILE" && mv "$TMPFILE" "$GENESIS"
 
+# Payment params at live-network parity (devnet-2/testnet/mainnet all run
+# reserve_time=60, forced_settle_time=30; the code default is 180 days). The
+# reserve window is the minimum storage charge on early deletion, so the
+# 180-day default would bury test_storage_fee_reclaim's delete-and-withdraw
+# in a half-year charge. Validation requires reserve_time > forced_settle_time.
+jq '
+  .app_state.payment.params.versioned_params.reserve_time = "60" |
+  .app_state.payment.params.forced_settle_time = "30"
+' "$GENESIS" > "$TMPFILE" && mv "$TMPFILE" "$GENESIS"
+
 # Set block time (consensus params)
 jq --arg bt "$BLOCK_TIME" '
   .consensus.params.block.time_iota_ms = "500"

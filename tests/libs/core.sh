@@ -292,6 +292,31 @@ wait_for_evm_tx() {
   done
 }
 
+# evm_tx: cast send with a decaying retry on nonce staleness. The remote RPC
+# is a multi-upstream pool, so right after a confirmed tx a nonce read can be
+# served by an upstream that hasn't indexed that block yet; waiting and
+# re-sending lets cast re-fetch the fresh nonce. Mirrors cosmos_tx: retries
+# ONLY the nonce/sequence rejection (safe — the tx was never accepted), any
+# other failure returns immediately.
+#
+# Usage: evm_tx <cast-send-args...>   (echoes cast output, returns its rc)
+evm_tx() {
+  local out attempt=0 max_attempts="${EVM_TX_RETRIES:-3}"
+  while :; do
+    attempt=$((attempt + 1))
+    out=$(cast send "$@" 2>&1) && { printf '%s\n' "$out"; return 0; }
+    if ! printf '%s' "$out" | grep -qiE "invalid nonce|invalid sequence"; then
+      printf '%s\n' "$out"
+      return 1
+    fi
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      printf '%s\n' "$out"
+      return 1
+    fi
+    sleep $((attempt * 2))
+  done
+}
+
 # Extract the EVM tx hash from moca-cmd output ("transaction hash:  0x...").
 # Empty result means no hash was printed (query commands, errors, etc).
 extract_evm_tx_hash() {

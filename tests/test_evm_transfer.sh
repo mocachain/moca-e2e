@@ -55,9 +55,9 @@ echo "  Recipient balance before: $BALANCE_BEFORE"
 
 # Send 0.001 MOCA (1e15 wei) — small to preserve funds
 echo "  Sending via cast..."
-SEND_OUT=$(cast send "$RECIPIENT" --value "10000000000000000" \
+SEND_OUT=$(evm_tx "$RECIPIENT" --value "10000000000000000" \
   --private-key "0x${PRIVKEY}" --rpc-url "$EVM_RPC" \
-  --chain-id "$EVM_CHAIN_ID" --json 2>&1) || {
+  --chain-id "$EVM_CHAIN_ID" --json) || {
   echo "  FAIL: cast send broadcast failed: $SEND_OUT"
   exit 1
 }

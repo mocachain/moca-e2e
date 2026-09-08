@@ -43,7 +43,11 @@ run_moca_cmd_payment() {
   print_test_section "payment-account ls"
   out=$(exec_moca_cmd payment-account ls --owner "$default_addr" || true)
   echo "$out" | head -12
-  pa_addr=$(echo "$out" | grep -oE 'addr:"0x[0-9a-fA-F]{40}"' | head -1 | grep -oE '0x[0-9a-fA-F]{40}' || true)
+  # Withdraw is only legal from refundable accounts, so pick the newest
+  # refundable one (= the account created above). On a long-lived network the
+  # owner's first account may be non-refundable, which made head -1 pick an
+  # account whose withdraw the chain rightly rejects.
+  pa_addr=$(echo "$out" | grep 'refundable:true' | grep -oE 'addr:"0x[0-9a-fA-F]{40}"' | tail -1 | grep -oE '0x[0-9a-fA-F]{40}' || true)
   if [ -z "$pa_addr" ]; then
     pa_addr=$(echo "$out" | grep -oE '0x[a-fA-F0-9]{40}' | tail -1 || true)
   fi
@@ -134,7 +138,9 @@ run_mocad_payment() {
     exit 1
   fi
 
-  PA_ADDR=$(echo "$ACCOUNTS" | jq -r '(.payment_accounts // .paymentAccounts // [])[0] // empty' 2>/dev/null)
+  # Newest account (= the one created above): the owner's older accounts may be
+  # non-refundable on a long-lived network, and withdraw is rejected for those.
+  PA_ADDR=$(echo "$ACCOUNTS" | jq -r '(.payment_accounts // .paymentAccounts // []) | last // empty' 2>/dev/null)
   echo "  payment account: $PA_ADDR"
 
   # Read the stream record via LCD when configured: the CLI ABCI path decodes

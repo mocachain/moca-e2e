@@ -212,9 +212,18 @@ print_test_section "store: bucket + sealed object billed to the payment account"
 OUT=$(exec_moca_cmd_signed bucket create --primarySP "$PRIMARY_SP" --paymentAddress "$PA_ADDR" "$BUCKET_URL")
 assert_tx_ok "$OUT" "create bucket"
 wait_for_block 2
-# The bucket must actually bill the dedicated account, on chain.
-BUCKET_PAYMENT=$(exec_mocad query storage head-bucket "$BUCKET_NAME" --node "$TM_RPC" --output json 2>/dev/null |
-  jq -r '.bucket_info.payment_address // .bucketInfo.paymentAddress // empty' 2>/dev/null || true)
+# The bucket must actually bill the dedicated account, on chain. LCD first:
+# the CLI ABCI path decodes with the local binary's proto and silently returns
+# empty fields against a version-mismatched remote chain.
+BUCKET_PAYMENT=""
+if [ -n "${REST:-}" ]; then
+  BUCKET_PAYMENT=$(curl -sf "${REST}/moca/storage/head_bucket/${BUCKET_NAME}" 2>/dev/null |
+    jq -r '.bucket_info.payment_address // .bucketInfo.paymentAddress // empty' 2>/dev/null || true)
+fi
+if [ -z "$BUCKET_PAYMENT" ]; then
+  BUCKET_PAYMENT=$(exec_mocad query storage head-bucket "$BUCKET_NAME" --node "$TM_RPC" --output json 2>/dev/null |
+    jq -r '.bucket_info.payment_address // .bucketInfo.paymentAddress // empty' 2>/dev/null || true)
+fi
 if [ "$(echo "$BUCKET_PAYMENT" | tr 'A-F' 'a-f')" != "$(echo "$PA_ADDR" | tr 'A-F' 'a-f')" ]; then
   echo "FAIL: bucket payment address is '$BUCKET_PAYMENT', expected $PA_ADDR"
   exit 1

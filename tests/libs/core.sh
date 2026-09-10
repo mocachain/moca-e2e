@@ -267,7 +267,7 @@ wait_for_evm_tx() {
   local hash="${1:-}" timeout="${2:-5}"
   [ -z "$hash" ] || [ "${hash#0x}" = "$hash" ] && return 1
 
-  local rcpt from deadline now pending_c latest_c
+  local rcpt from deadline drain_deadline now pending_c latest_c
   deadline=$(( $(date +%s) + timeout ))
 
   # Wait until the tx is mined. Receipt existence is monotonic and holds on
@@ -285,7 +285,10 @@ wait_for_evm_tx() {
   # Best-effort drain for implicit follow-up txs (e.g. bucket create --tags).
   # Against a pooled RPC pending/latest can be served by different upstreams
   # and never agree, so once the tx itself is mined a non-converging drain is
-  # not a failure.
+  # not a failure — and it gets its own small budget so those environments
+  # don't sleep out the whole deadline on a check that cannot succeed there.
+  drain_deadline=$(( $(date +%s) + 3 ))
+  [ "$drain_deadline" -gt "$deadline" ] && drain_deadline=$deadline
   while :; do
     pending_c=$(_evm_rpc eth_getTransactionCount "[\"$from\",\"pending\"]")
     latest_c=$(_evm_rpc eth_getTransactionCount "[\"$from\",\"latest\"]")
@@ -293,7 +296,7 @@ wait_for_evm_tx() {
     if [ -n "$pending_c" ] && [ "$pending_c" = "$latest_c" ] && [ "$pending_c" != "null" ]; then
       return 0
     fi
-    now=$(date +%s); [ "$now" -ge "$deadline" ] && return 0
+    now=$(date +%s); [ "$now" -ge "$drain_deadline" ] && return 0
     sleep 1
   done
 }

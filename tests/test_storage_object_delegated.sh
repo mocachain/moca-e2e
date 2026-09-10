@@ -68,11 +68,16 @@ cleanup() {
 trap cleanup EXIT
 
 # The delegated create/update txs are signed by the SP operator, so the uploader's
-# EVM nonce must stay put across both steps (moca-cmd's keystore holds TEST_KEY).
-UPLOADER_ADDR="$(get_key_address "$TEST_KEY")"
+# EVM nonce must stay put across both steps. The uploader is whatever account
+# moca-cmd's keystore signs with — resolve it from there, not the mocad keyring,
+# or the assertion pins an address that was never going to move.
+UPLOADER_ADDR="$(exec_moca_cmd account ls 2>/dev/null | grep -oE '0x[a-fA-F0-9]{40}' | head -1 || true)"
+if [ -z "$UPLOADER_ADDR" ]; then
+  skip "cannot resolve the moca-cmd signer address for the nonce checks"
+fi
 uploader_nonce() {
   local n
-  n="$(_evm_rpc eth_getTransactionCount "[\"${UPLOADER_ADDR}\",\"latest\"]")"
+  n="$(_evm_rpc eth_getTransactionCount "[\"${UPLOADER_ADDR}\",\"pending\"]")"
   echo "${n//\"/}"
 }
 
@@ -116,7 +121,7 @@ print_test_section "Step 2: object put --delegate (SP creates the object on chai
 # moca-cmd polls HeadObject until OBJECT_STATUS_SEALED before printing "upload <obj> to <url>".
 # Its errors are printed as "run command error: ..." with exit 0, so assert on the output.
 out=$(exec_moca_cmd_signed object put --delegate --contentType "$CONTENT_TYPE" "$SOURCE_FILE" "$OBJECT_URL" || true)
-if ! echo "$out" | grep -q "upload ${OBJECT_NAME} to ${OBJECT_URL}"; then
+if ! echo "$out" | grep -qF -- "upload ${OBJECT_NAME} to ${OBJECT_URL}"; then
   echo "FAIL: delegated object put did not reach SEALED: $(echo "$out" | tail -3)"
   exit 1
 fi
@@ -145,11 +150,7 @@ if ! head_has_line "payload_size:${SOURCE_SIZE}"; then
   exit 1
 fi
 print_success "object head: name, content_type and payload_size (${SOURCE_SIZE}) match"
-if [ -n "$UPLOADER_ADDR" ]; then
-  assert_eq "$(uploader_nonce)" "$NONCE_BEFORE" "uploader nonce unchanged by delegated put"
-else
-  echo "  WARN: cannot resolve ${TEST_KEY} address; skipping nonce checks"
-fi
+assert_eq "$(uploader_nonce)" "$NONCE_BEFORE" "uploader nonce unchanged by delegated put"
 
 print_test_section "Step 4: object get matches the uploaded content"
 SOURCE_SHA="$(sha256_file "$SOURCE_FILE")"
@@ -161,7 +162,7 @@ print_success "downloaded object sha256 matches (${SOURCE_SHA:0:12}...)"
 
 print_test_section "Step 5: object update --delegate (SP replaces the content on chain, blocks until re-sealed)"
 out=$(exec_moca_cmd_signed object update --delegate --contentType "$CONTENT_TYPE" "$UPDATE_FILE" "$OBJECT_URL" || true)
-if ! echo "$out" | grep -q "update ${OBJECT_NAME} to ${OBJECT_URL}"; then
+if ! echo "$out" | grep -qF -- "update ${OBJECT_NAME} to ${OBJECT_URL}"; then
   echo "FAIL: delegated object update did not reach SEALED: $(echo "$out" | tail -3)"
   exit 1
 fi
@@ -183,9 +184,7 @@ if ! head_has_line "payload_size:${UPDATE_SIZE}"; then
   exit 1
 fi
 print_success "delegated update completed, object re-SEALED with payload_size ${UPDATE_SIZE}"
-if [ -n "$UPLOADER_ADDR" ]; then
-  assert_eq "$(uploader_nonce)" "$NONCE_BEFORE" "uploader nonce unchanged by delegated update"
-fi
+assert_eq "$(uploader_nonce)" "$NONCE_BEFORE" "uploader nonce unchanged by delegated update"
 
 print_test_section "Step 6: object get matches the updated content"
 UPDATE_SHA="$(sha256_file "$UPDATE_FILE")"
@@ -198,13 +197,17 @@ print_success "downloaded object sha256 matches the update (${UPDATE_SHA:0:12}..
 
 print_test_section "Step 7: cleanup"
 out=$(moca_cmd_tx object rm "$OBJECT_URL" || true)
-if echo "$out" | grep -qiE "delete|remove"; then
-  print_success "object removed"
+if ! echo "$out" | grep -qiE "delete|remove"; then
+  echo "FAIL: object rm failed: $(echo "$out" | tail -2)"
+  exit 1
 fi
+print_success "object removed"
 out=$(moca_cmd_tx bucket rm "$BUCKET_URL" || true)
-if echo "$out" | grep -qiE "delete_bucket|remove"; then
-  print_success "bucket removed"
+if ! echo "$out" | grep -qiE "delete_bucket|remove"; then
+  echo "FAIL: bucket rm failed: $(echo "$out" | tail -2)"
+  exit 1
 fi
+print_success "bucket removed"
 
 trap - EXIT
 cleanup

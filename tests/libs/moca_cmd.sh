@@ -86,8 +86,10 @@ moca_cmd_tx() {
   rc=$?
   hash=$(extract_evm_tx_hash "$out")
   if [ -n "$hash" ]; then
-    if ! wait_for_evm_tx "$hash" 5 >/dev/null 2>&1; then
-      echo "  ERROR: wait_for_evm_tx timed out waiting for mempool to drain after $hash" >&2
+    # Remote RPC pools need longer to converge: pending/latest counts can be
+    # served by different upstreams, so equality lags a just-mined tx.
+    if ! wait_for_evm_tx "$hash" "${EVM_DRAIN_TIMEOUT:-$([ "${ENV:-local}" = "local" ] && echo 5 || echo 20)}" >/dev/null 2>&1; then
+      echo "  ERROR: wait_for_evm_tx timed out waiting for tx to be mined: $hash" >&2
       rc=1
     fi
     if [ "${CHECK_TX_STATUS:-0}" = "1" ]; then

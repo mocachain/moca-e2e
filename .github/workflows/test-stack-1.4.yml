@@ -186,6 +186,9 @@ jobs:
         env:
           TEST_GROUP: ${{ matrix.group }}
           STRICT_SKIPS: "1"
+          # The 1.4 stack pins the release-line moca-cmd, which never grows
+          # main-line CLI features; capability skips for those are expected.
+          STRICT_SKIPS_ALLOW: "test_storage_object_delegated.sh"
         run: ./scripts/run-suite.sh local config/local.yaml
 
       - name: Collect logs

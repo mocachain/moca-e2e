@@ -45,6 +45,7 @@ SKIPPED=0
 FAILED=0
 ERRORS=""
 SKIPS=""
+SKIP_NAMES=""
 
 # Map each test to a shard group so parallel CI jobs can run disjoint subsets:
 #   chain — consensus / bank / staking / EVM (no SP dependency)
@@ -86,6 +87,7 @@ for test_file in "$TESTS_DIR"/$TEST_PATTERN; do
     echo "  SKIP: $test_name"
     SKIPPED=$((SKIPPED + 1))
     SKIPS="$SKIPS\n  - $test_name"
+    SKIP_NAMES="$SKIP_NAMES $test_name"
   elif [ "$rc" -eq 0 ]; then
     echo "  PASS: $test_name"
     PASSED=$((PASSED + 1))
@@ -118,7 +120,20 @@ fi
 
 # Strict mode (CI shards): a skip means a precondition that should hold in the
 # controlled cluster didn't, so fail loudly instead of passing green with a gap.
+# STRICT_SKIPS_ALLOW lists tests whose skip is a known capability gap on this
+# stack (e.g. a frozen release-line CLI that will never grow a new flag) — they
+# still report as SKIP, they just don't fail the shard.
 if [ "${STRICT_SKIPS:-0}" = "1" ] && [ "$SKIPPED" -gt 0 ]; then
-  echo "Error: STRICT_SKIPS=1 and $SKIPPED test(s) skipped:$SKIPS"
-  exit 1
+  DISALLOWED=""
+  for skip_name in $SKIP_NAMES; do
+    case " ${STRICT_SKIPS_ALLOW:-} " in
+      *" $skip_name "*) ;;
+      *) DISALLOWED="$DISALLOWED $skip_name" ;;
+    esac
+  done
+  if [ -n "$DISALLOWED" ]; then
+    echo "Error: STRICT_SKIPS=1 and $SKIPPED test(s) skipped:$SKIPS"
+    exit 1
+  fi
+  echo "STRICT_SKIPS: skipped test(s) are allowlisted via STRICT_SKIPS_ALLOW:$SKIPS"
 fi

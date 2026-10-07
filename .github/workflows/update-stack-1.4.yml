@@ -10,12 +10,9 @@ name: Update Stack (1.4)
 # when that go.mod does, via a manual edit to stack-1.4.yaml.
 
 on:
-  # Poll release/1.4.x every 20 minutes (self-contained; no source-repo hook
-  # required). Runs this whole week while the 1.4 line is under active debugging.
-  schedule:
-    - cron: '*/20 * * * *'
-  # Also accept an explicit push notification from moca / moca-storage-provider
-  # release/1.4.x, if their notify-e2e workflow is extended to send it.
+  # Accept an explicit push notification from moca / moca-storage-provider
+  # release/1.4.x, if their notify-e2e workflow is extended to send it (today
+  # it fires only for main, so in practice this runs via workflow_dispatch).
   repository_dispatch:
     types: [repo-updated-1.4]
   workflow_dispatch:

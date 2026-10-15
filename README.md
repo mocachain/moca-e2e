@@ -114,6 +114,7 @@ Source repo merges to main
 | `test_validator_stake` | Staking — all validators bonded, equal stake |
 | `test_evm_transfer` | EVM — native transfer via JSON-RPC |
 | `test_evm_erc20` | EVM — contract deploy + interact |
+| `test_evm_precompiles` | EVM — standard Ethereum precompiles (`0x01`-`0x11`) answer `eth_call` with known vectors, a tx to `sha256` mines, a contract reaches `sha256`/`ecrecover`; Bank — sends to precompile addresses are rejected. Prague checks run only on cosmos/evm-based moca (v2+) |
 | `test_cross_module` | Bank, Staking, Distribution — sequential txs across modules |
 | `test_storage_bucket` | Storage — bucket create/query/delete via `mocad`; if `moca-cmd` is available, full bucket CLI flow |
 | `test_storage_object` | Storage — full object CLI flow (`put`, `head`, `setTag`, `ls`, cleanup) when `moca-cmd` is available; else bucket-only `mocad` smoke |

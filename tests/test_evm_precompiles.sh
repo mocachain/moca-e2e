@@ -89,12 +89,22 @@ check_call() {
 # cosmos/evm's default chain config, which enables every fork through Prague
 # at genesis (the chain config is app-level there, not a param). evmos-based
 # v1.x serves /evmos/evm/v1/params instead and only wires Berlin (0x01-0x09).
-PRAGUE_EXPECTED=0
-if curl -sf "${REST}/cosmos/evm/vm/v1/params" >/dev/null 2>&1; then
+# Both are probed so that an unreachable REST endpoint is a failure, never a
+# silent downgrade to the Berlin-only checks.
+rest_status() { curl -s -o /dev/null -w '%{http_code}' "${REST}$1" 2>/dev/null || true; }
+COSMOS_EVM_STATUS=$(rest_status /cosmos/evm/vm/v1/params)
+if [ "$COSMOS_EVM_STATUS" = "200" ]; then
   PRAGUE_EXPECTED=1
   echo "  EVM: cosmos/evm (Prague precompiles 0x0a-0x11 expected)"
 else
-  echo "  EVM: evmos-based (no /cosmos/evm/vm/v1/params), Berlin precompiles only"
+  EVMOS_STATUS=$(rest_status /evmos/evm/v1/params)
+  if [ "$EVMOS_STATUS" = "200" ]; then
+    PRAGUE_EXPECTED=0
+    echo "  EVM: evmos-based (Berlin precompiles 0x01-0x09 only)"
+  else
+    echo "  FAIL: cannot tell which EVM this chain runs: ${REST}/cosmos/evm/vm/v1/params -> HTTP ${COSMOS_EVM_STATUS}, /evmos/evm/v1/params -> HTTP ${EVMOS_STATUS}"
+    exit 1
+  fi
 fi
 
 print_test_section "Standard precompiles via eth_call (0x01-0x05)"

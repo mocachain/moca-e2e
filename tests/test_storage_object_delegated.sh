@@ -124,8 +124,8 @@ print_test_section "Step 2: object put --delegate (SP creates the object on chai
 # Its errors are printed as "run command error: ..." with exit 0, so assert on the output.
 # The poll has no timeout of its own (an SP that never seals would hang the suite), so
 # cap it: SEALED normally lands within a few blocks of the upload finishing.
-out=$(with_deadline "$DELEGATE_SEAL_DEADLINE" exec_moca_cmd_signed object put --delegate --contentType "$CONTENT_TYPE" "$SOURCE_FILE" "$OBJECT_URL")
-rc=$?
+rc=0
+out=$(with_deadline "$DELEGATE_SEAL_DEADLINE" exec_moca_cmd_signed object put --delegate --contentType "$CONTENT_TYPE" "$SOURCE_FILE" "$OBJECT_URL") || rc=$?
 if [ "$rc" -eq 124 ]; then
   echo "FAIL: delegated object put still not SEALED after ${DELEGATE_SEAL_DEADLINE}s: $(echo "$out" | tail -1)"
   exit 1
@@ -170,8 +170,8 @@ fi
 print_success "downloaded object sha256 matches (${SOURCE_SHA:0:12}...)"
 
 print_test_section "Step 5: object update --delegate (SP replaces the content on chain, blocks until re-sealed)"
-out=$(with_deadline "$DELEGATE_SEAL_DEADLINE" exec_moca_cmd_signed object update --delegate --contentType "$CONTENT_TYPE" "$UPDATE_FILE" "$OBJECT_URL")
-rc=$?
+rc=0
+out=$(with_deadline "$DELEGATE_SEAL_DEADLINE" exec_moca_cmd_signed object update --delegate --contentType "$CONTENT_TYPE" "$UPDATE_FILE" "$OBJECT_URL") || rc=$?
 if [ "$rc" -eq 124 ]; then
   echo "FAIL: delegated object update still not re-SEALED after ${DELEGATE_SEAL_DEADLINE}s: $(echo "$out" | tail -1)"
   exit 1

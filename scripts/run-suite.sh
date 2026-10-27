@@ -78,7 +78,8 @@ for test_file in "$TESTS_DIR"/$TEST_PATTERN; do
   rc=${PIPESTATUS[0]}
   set -e
   # Last non-blank line, leading whitespace stripped — used for the SKIP marker.
-  last_line="$(grep -vE '^[[:space:]]*$' "$out_file" | tail -n 1 | sed 's/^[[:space:]]*//')"
+  # `|| true`: a test with no output makes grep exit 1, which must not abort the suite.
+  last_line="$(grep -vE '^[[:space:]]*$' "$out_file" | tail -n 1 | sed 's/^[[:space:]]*//' || true)"
   rm -f "$out_file"
 
   # SKIPPED = the reserved skip code 77 (from skip()), or exit 0 whose final line is

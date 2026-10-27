@@ -129,7 +129,9 @@ jobs:
       - name: Run genesis init
         timeout-minutes: 5
         run: |
-          $COMPOSE up genesis-init 2>&1 | tail -20
+          # compose up exits 0 even when the container fails; --exit-code-from + pipefail fail the step.
+          set -o pipefail
+          $COMPOSE up --exit-code-from genesis-init genesis-init 2>&1 | tail -20
           echo "Genesis init complete"
 
       - name: Start validators and MySQL

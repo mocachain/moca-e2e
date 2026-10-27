@@ -81,8 +81,7 @@ if ! grep -qF "make_bucket: ${BUCKET_NAME}" <<<"$out"; then
 fi
 assert_eq_within 60 present "bucket $BUCKET_NAME exists on chain" bucket_presence "$BUCKET_URL"
 
-# object put (without --bypassSeal) prints "upload <obj> to <url>" only once HeadObject reports SEALED
-# (errors print as "run command error:" with exit 0), so the head below must prove the seal.
+# "upload <obj> to <url>" prints only after SEALED; the head must prove it
 out=$(exec_moca_cmd_signed object put --contentType "application/octet-stream" "$TEST_FILE" "$OBJECT_REL" || true)
 if ! grep -qF "upload ${OBJECT_NAME} to ${OBJECT_REL}" <<<"$out"; then
   echo "FAIL: object put did not reach the sealed marker: $(echo "$out" | tail -3)"

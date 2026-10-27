@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # E2E: object lifecycle (devcontainer object_test parity).
 # moca-cmd: create bucket -> put (SEALED) -> head -> setTag -> ls -> rm object -> rm bucket,
-# each step asserted on chain/SP state rather than on the CLI's printed output.
 # fallback: mocad storage txs when moca-cmd unavailable.
 # shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
@@ -98,8 +97,7 @@ bucket_presence() { if exec_moca_cmd bucket head -f json "$1" 2>/dev/null | grep
 run_moca_cmd_object_full() {
   local bucket_name object_name tags utags owner object_size
   bucket_name="$(generate_bucket_name "e2e-obj")"
-  # bucket_url/object_path/object_file are global (not local): the EXIT trap still needs
-  # them when a failed assertion aborts under set -e
+  # globals: the EXIT trap needs them after a failed assertion
   bucket_url="moca://${bucket_name}"
   object_name="test_object.txt"
   object_path="${bucket_url}/${object_name}"
@@ -133,8 +131,7 @@ run_moca_cmd_object_full() {
   assert_eq_within 60 present "bucket $bucket_name exists on chain" bucket_presence "$bucket_url"
 
   print_test_section "Step 2: put object (blocks until SEALED)"
-  # "upload <obj> to <url>" only prints once HeadObject reports SEALED ("created on chain" prints
-  # earlier, and errors print as "run command error:" with exit 0), so the head must prove SEALED.
+  # "upload <obj> to <url>" prints only after SEALED; the head must prove it
   out=$(exec_moca_cmd_signed object put --tags="$tags" --contentType "$content_type" "$object_file" "$object_path" || true)
   if ! grep -qF "upload ${object_name} to ${object_path}" <<<"$out"; then
     echo "FAIL: object put did not reach the sealed marker: $(echo "$out" | tail -3)"

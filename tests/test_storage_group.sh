@@ -2,7 +2,6 @@
 # E2E test: group operations.
 # When moca-cmd is available: create -> head -> update members -> head-member / ls-member ->
 # setTag -> ls -> rm (aligned with devcontainer group_test flow), each step asserted on
-# chain/SP state rather than on the CLI's printed output.
 # Otherwise: mocad tx storage create-group / head-group / update-group-member / delete-group.
 # shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
@@ -154,7 +153,7 @@ group_member_state() {
 group_member_rows() { exec_moca_cmd group ls-member --groupOwner "$1" "$2" 2>/dev/null | tail -n +2 | grep -c . || true; }
 
 run_moca_cmd_group_full() {
-  # global (not local): the EXIT trap still needs it when a failed assertion aborts under set -e
+  # global: the EXIT trap needs it after a failed assertion
   group_name="e2e-group-$(date +%s)-${RANDOM}"
   local tags='[{"key":"key1","value":"value1"},{"key":"key2","value":"value2"}]'
   local updated_tags='[{"key":"key3","value":"value3"}]'

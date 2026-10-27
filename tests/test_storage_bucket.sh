@@ -2,7 +2,6 @@
 # E2E test: bucket operations.
 # When moca-cmd is available: full flow aligned with devcontainer (create -> ls -> head ->
 # get-quota -> update visibility -> setTag -> buy-quota -> verify quota -> rm), each step
-# asserted on chain/SP state rather than on the CLI's printed output.
 # Otherwise: mocad tx storage create-bucket / head-bucket / delete-bucket (legacy path).
 # shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
@@ -114,7 +113,7 @@ bucket_charged_quota() { exec_moca_cmd bucket get-quota "$1" 2>/dev/null | awk '
 run_moca_cmd_bucket_full() {
   local bucket_name
   bucket_name="e2e-bucket-$(date +%s)-${RANDOM}"
-  # global (not local): the EXIT trap still needs it when a failed assertion aborts under set -e
+  # global: the EXIT trap needs it after a failed assertion
   bucket_url="moca://${bucket_name}"
   local tags='[{"key":"key1","value":"value1"},{"key":"key2","value":"value2"}]'
   local updated_tags='[{"key":"key3","value":"value3"}]'

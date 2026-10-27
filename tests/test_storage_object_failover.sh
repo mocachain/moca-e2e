@@ -182,6 +182,7 @@ EOF
     --chain-id "$CHAIN_ID" \
     --node tcp://localhost:26657 \
     --gas auto --gas-adjustment 1.5 \
+    --fees "${COSMOS_TX_FEES:-10000000000000000amoca}" \
     -y 2>&1 || true)"
   echo "$submit_out"
   sleep 5
@@ -212,6 +213,7 @@ EOF
       --chain-id "$CHAIN_ID" \
       --node tcp://localhost:26657 \
       --gas auto --gas-adjustment 1.5 \
+      --fees "${COSMOS_TX_FEES:-10000000000000000amoca}" \
       --home /root/.mocad \
       -y 2>&1 || true)"
     echo "$vote_out"
@@ -433,7 +435,7 @@ trap cleanup EXIT
 
 print_test_section "Step 1: create bucket on ${PRIMARY_SP_CONTAINER}"
 bucket_out="$(moca_cmd_tx bucket create --primarySP "$PRIMARY_SP" "$BUCKET_URL" || true)"
-if ! echo "$bucket_out" | grep -q "make_bucket:\|$BUCKET_NAME"; then
+if ! grep -qF "make_bucket: ${BUCKET_NAME}" <<<"$bucket_out"; then
   echo "$bucket_out"
   echo "FAIL: bucket create did not succeed"
   exit 1

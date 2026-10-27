@@ -110,7 +110,7 @@ wait_for_object_content() {
 
 print_test_section "Step 1: create bucket"
 out=$(moca_cmd_tx bucket create --primarySP "$PRIMARY_SP" "$BUCKET_URL" || true)
-if ! echo "$out" | grep -q "make_bucket:\|$BUCKET_NAME"; then
+if ! grep -qF "make_bucket: ${BUCKET_NAME}" <<<"$out"; then
   echo "FAIL: bucket create output unexpected: $(echo "$out" | head -3)"
   exit 1
 fi

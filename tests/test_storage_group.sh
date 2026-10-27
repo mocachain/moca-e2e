@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # E2E test: group operations.
 # When moca-cmd is available: create -> head -> update members -> head-member / ls-member ->
-# setTag -> ls -> rm (aligned with devcontainer group_test flow).
+# setTag -> ls -> rm (aligned with devcontainer group_test flow), each step asserted on
+# chain/SP state rather than on the CLI's printed output.
 # Otherwise: mocad tx storage create-group / head-group / update-group-member / delete-group.
 # shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
@@ -11,6 +12,8 @@ _CONFIG_FILE="${2:-config/local.yaml}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=libs/core.sh
 source "$SCRIPT_DIR/libs/core.sh"
+# shellcheck source=libs/assertions.sh
+source "$SCRIPT_DIR/libs/assertions.sh"
 # shellcheck source=libs/moca_cmd.sh
 source "$SCRIPT_DIR/libs/moca_cmd.sh"
 
@@ -52,6 +55,7 @@ run_mocad_group_smoke() {
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
     --gas auto --gas-adjustment 1.5 \
+    --fees "${COSMOS_TX_FEES:-10000000000000000amoca}" \
     -y 2>/dev/null || echo "FAILED")
 
   create_hash=$(echo "$create_out" | grep -oE '0x[0-9a-fA-F]{64}' | head -1)
@@ -91,6 +95,7 @@ run_mocad_group_smoke() {
       --chain-id "$CHAIN_ID" \
       --node "$TM_RPC" \
       --gas auto --gas-adjustment 1.5 \
+      --fees "${COSMOS_TX_FEES:-10000000000000000amoca}" \
       -y 2>/dev/null || true
     wait_for_tx 3
   fi
@@ -104,6 +109,7 @@ run_mocad_group_smoke() {
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
     --gas auto --gas-adjustment 1.5 \
+    --fees "${COSMOS_TX_FEES:-10000000000000000amoca}" \
     -y 2>/dev/null || echo "")
   del_hash=$(echo "$del_out" | grep -oE '0x[0-9a-fA-F]{64}' | head -1)
   if [ -n "$del_hash" ]; then
@@ -114,12 +120,52 @@ run_mocad_group_smoke() {
   echo "PASS: storage group operations tested (mocad path)"
 }
 
+lc() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# assert_eq_within <timeout_s> <expected> <msg> <cmd...>: poll the command's stdout until it equals <expected>, then assert.
+assert_eq_within() {
+  local timeout="$1" expected="$2" msg="$3" actual deadline
+  shift 3
+  deadline=$(( $(date +%s) + timeout ))
+  while :; do
+    actual="$("$@" 2>/dev/null || true)"
+    [ "$actual" = "$expected" ] && break
+    [ "$(date +%s)" -ge "$deadline" ] && break
+    sleep 2
+  done
+  assert_eq "$actual" "$expected" "$msg"
+}
+
+# `group head -f json` as one JSON object; empty when the group does not exist.
+group_info_json() { exec_moca_cmd group head -f json "$1" 2>/dev/null | grep -m1 '^{' || true; }
+group_field() { group_info_json "$1" | jq -r "$2 // empty" 2>/dev/null || true; }
+group_tags() { group_info_json "$1" | jq -r '[.tags.tags[]? | "\(.key)=\(.value)"] | sort | join(",")' 2>/dev/null || true; }
+group_presence() { if [ -n "$(group_info_json "$1")" ]; then echo present; else echo gone; fi; }
+group_listed() { exec_moca_cmd group ls 2>/dev/null | awk -v n="$1" '$3 == n {f=1} END {print f ? "listed" : "missing"}'; }
+# head-member args are "<member> <group>" (member first); prints member / not-member.
+group_member_state() {
+  if exec_moca_cmd group head-member --groupOwner "$1" "$2" "$3" 2>/dev/null | grep -qF "the user $2 is a member of the group: $3"; then
+    echo member
+  else
+    echo not-member
+  fi
+}
+# live rows printed by ls-member (the header is the first line).
+group_member_rows() { exec_moca_cmd group ls-member --groupOwner "$1" "$2" 2>/dev/null | tail -n +2 | grep -c . || true; }
+
 run_moca_cmd_group_full() {
-  local group_name
+  # global (not local): the EXIT trap still needs it when a failed assertion aborts under set -e
   group_name="e2e-group-$(date +%s)-${RANDOM}"
   local tags='[{"key":"key1","value":"value1"},{"key":"key2","value":"value2"}]'
   local updated_tags='[{"key":"key3","value":"value3"}]'
-  local member="${MEMBER_ADDR:-0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266}"
+  local owner member non_member="0x0000000000000000000000000000000000000001" out listed
+
+  owner="$(exec_moca_cmd account ls 2>/dev/null | grep -oE '0x[a-fA-F0-9]{40}' | head -1 || true)"
+  [ -n "$owner" ] || owner="$OWNER_ADDR"
+  member="${MEMBER_ADDR:-}"
+  if [ -z "$member" ] || [ "$(lc "$member")" = "$(lc "$owner")" ]; then
+    member="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+  fi
 
   echo "Testing storage group (moca-cmd path): $group_name"
 
@@ -129,41 +175,51 @@ run_moca_cmd_group_full() {
   trap cleanup_group EXIT
 
   echo "  Step 1: create group..."
-  local out
   out=$(exec_moca_cmd_signed group create --tags="$tags" "$group_name" || true)
-  if ! echo "$out" | grep -q "make_group:\|$group_name"; then
+  if ! grep -qF "make_group: ${group_name}" <<<"$out"; then
     echo "  FAIL: group create output unexpected: $(echo "$out" | head -3)"
     exit 1
   fi
-  wait_for_tx 3
 
   echo "  Step 2: head..."
-  exec_moca_cmd group head "$group_name" 2>/dev/null | head -20 || true
-  wait_for_tx 2
+  assert_eq_within 60 "$group_name" "group $group_name exists on chain" group_field "$group_name" .group_name
+  assert_eq "$(lc "$(group_field "$group_name" .owner)")" "$(lc "$owner")" "group owner is the signer"
+  assert_eq_within 30 "key1=value1,key2=value2" "tags set at create" group_tags "$group_name"
 
   echo "  Step 3: update members..."
   out=$(exec_moca_cmd_signed group update --addMembers "$member" "$group_name" || true)
-  echo "$out" | head -5
-  wait_for_tx 3
-
-  if [ -n "$OWNER_ADDR" ]; then
-    echo "  Step 4-5: head-member / ls-member..."
-    exec_moca_cmd group head-member --groupOwner "$OWNER_ADDR" "$group_name" "$member" 2>/dev/null || true
-    exec_moca_cmd group ls-member --groupOwner "$OWNER_ADDR" "$group_name" 2>/dev/null | head -20 || true
+  if ! grep -qF "update_group: ${group_name}" <<<"$out"; then
+    echo "  FAIL: group update output unexpected: $(echo "$out" | head -3)"
+    exit 1
   fi
-  wait_for_tx 2
+
+  echo "  Step 4-5: head-member / ls-member..."
+  assert_eq_within 60 member "head-member reports the added member" group_member_state "$owner" "$member" "$group_name"
+  assert_eq "$(group_member_state "$owner" "$non_member" "$group_name")" "not-member" "head-member rejects a non-member"
+  assert_eq_within 60 1 "ls-member lists exactly the added member" group_member_rows "$owner" "$group_name"
+  # The list-member response currently has a blank member column; once it carries the address it must match.
+  listed="$(exec_moca_cmd group ls-member --groupOwner "$owner" "$group_name" 2>/dev/null | grep -oE '0x[a-fA-F0-9]{40}' || true)"
+  if [ -n "$listed" ]; then
+    assert_eq "$(lc "$listed")" "$(lc "$member")" "ls-member row address"
+  else
+    echo "  NOTE: ls-member row has no member address; only the row count is asserted"
+  fi
 
   echo "  Step 6: setTag..."
-  out=$(exec_moca_cmd group setTag --tags="$updated_tags" "$group_name" || true)
-  echo "$out" | head -5
-  wait_for_tx 3
+  exec_moca_cmd_signed group setTag --tags="$updated_tags" "$group_name" >/dev/null 2>&1 || true
+  assert_eq_within 30 "key3=value3" "tags after setTag replace the old set" group_tags "$group_name"
 
   echo "  Step 7: ls..."
-  exec_moca_cmd group ls 2>/dev/null | head -20 || true
+  assert_eq_within 60 listed "group ls lists the group" group_listed "$group_name"
 
   echo "  Step 8: remove group..."
-  exec_moca_cmd_signed group rm "$group_name" >/dev/null 2>&1 || true
-  wait_for_tx 3
+  out=$(exec_moca_cmd_signed group rm "$group_name" || true)
+  if ! grep -qF "delete_group: ${group_name}" <<<"$out"; then
+    echo "  FAIL: group rm output unexpected: $(echo "$out" | head -3)"
+    exit 1
+  fi
+  assert_eq_within 60 gone "group head reports the group gone after rm" group_presence "$group_name"
+  assert_eq_within 60 missing "group ls no longer lists the group" group_listed "$group_name"
 
   trap - EXIT
   echo "PASS: storage group comprehensive test (moca-cmd path)"

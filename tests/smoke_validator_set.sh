@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # Smoke test: verify the active validator set — every validator has voting power and, on the
-# local topology, the set covers the validator containers and each validator signs blocks.
 set -euo pipefail
 
 ENV="${1:-local}"

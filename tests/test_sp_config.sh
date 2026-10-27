@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # E2E: SP config.toml checks (devcontainer test-sp-config parity).
-# Every expected key must be present with a valid value; an unreadable config or any missing/invalid
-# key fails the test. Gas limits and fees are the values docker/entrypoint-sp.sh patches in.
+# every expected key must be present and valid; an unreadable config fails the test
 set -euo pipefail
 
 ENV="${1:-local}"

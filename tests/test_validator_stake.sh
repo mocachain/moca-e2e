@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # E2E test: verify 6/6 validators bonded with equal stake distribution (all bonded, one common
-# stake on the local topology; on a live network only that something is bonded)
 # shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 

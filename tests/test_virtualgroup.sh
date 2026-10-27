@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # E2E test: virtual group module — query GVGs and global virtual group families.
-# A family exists once SPs have been in use, every family has a registered primary, and each GVG
-# keeps its full redundancy set of distinct, registered secondary SPs.
+# a family must exist, every family has a registered primary, every GVG keeps its full secondary set
 # shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 

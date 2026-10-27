@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # E2E: verify deployed SPs (devcontainer test_join verification parity, no create-sp): chain
-# registration and status, health probes of every SP container, and the moca-cmd sp queries.
 # shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # E2E test: verify storage providers are registered and in service.
-# Local topology: every SP is IN_SERVICE or exiting and at most the two sp-exit targets are out of
-# service; a live network needs one SP serving (other statuses warn).
+# local: every SP IN_SERVICE or exiting, at most the two sp-exit targets out of service; live: one SP serving
 # shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 

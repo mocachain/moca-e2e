@@ -26,10 +26,7 @@ resolve_moca_cmd() {
   return 1
 }
 
-# _moca_cmd_run <cmd...>: run a moca-cmd invocation, echo its stdout, and fail on a
-# non-zero exit or a failure line. moca-cmd exits 0 after printing "run command error:"
-# or the no-balance message on stdout, so the exit code alone is not a result.
-# exec keeps the command a direct child of the caller (no extra subshell to outlive a kill).
+# _moca_cmd_run <cmd...>: echo stdout; fail on a non-zero exit or a moca-cmd failure line (moca-cmd exits 0 on errors)
 _moca_cmd_run() {
   local out rc=0
   out="$(exec "$@" 2>/dev/null)" || rc=$?
@@ -92,10 +89,7 @@ exec_moca_cmd_signed() {
 # some ops — like `bucket create --tags=…` — also emit an extra implicit tx
 # whose hash isn't printed, so a plain-hash wait misses it).
 #
-# Echoes moca-cmd output to stdout, returns the wrapper's rc (non-zero on a
-# failed command, see _moca_cmd_run). Sets rc=1 if mempool didn't drain in 5s
-# (chain stuck / tx got dropped) or, when CHECK_TX_STATUS=1, the tx receipt
-# shows status=0x0.
+# Echoes moca-cmd output; non-zero rc on a failed command, an undrained mempool, or (CHECK_TX_STATUS=1) a failed receipt.
 moca_cmd_tx() {
   local out rc=0 hash status
   out=$(exec_moca_cmd_signed "$@") || rc=$?

@@ -71,6 +71,29 @@ exec_moca_cmd_signed() {
   "$bin" "${args[@]}" "$@" 2>/dev/null
 }
 
+# with_deadline <seconds> <function|command> [args...]: hard cap on a blocking call.
+# moca-cmd's `object put/update --delegate` poll HeadObject until SEALED with no
+# timeout of their own, so an object that never seals would hang the whole suite.
+# Returns 124 when the cap is hit (as timeout(1) does), else the command's rc.
+# Implemented as a background job so it also works for shell functions.
+with_deadline() {
+  local secs="$1" pid deadline
+  shift
+  "$@" &
+  pid=$!
+  deadline=$(( $(date +%s) + secs ))
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      pkill -TERM -P "$pid" 2>/dev/null || true
+      kill -TERM "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null
+      return 124
+    fi
+    sleep 2
+  done
+  wait "$pid"
+}
+
 # moca_cmd_tx: signed call that additionally waits for the sender's mempool
 # to drain before returning. Prevents nonce-race on back-to-back signed calls
 # (moca-cmd queries Cosmos auth sequence at "latest", which lags pending txs;

@@ -124,8 +124,17 @@ if resolve_moca_cmd >/dev/null 2>&1; then
     FAIL=$((FAIL + 1))
   fi
 
-  EP_FIRST=$(first_in_service_sp_endpoint 2>/dev/null || true)
-  OP_FIRST=$(first_in_service_sp_operator 2>/dev/null || true)
+  # endpoint and operator must come from the same SP row: the listing order is not stable across queries
+  ROW=""
+  if [ -n "${SP_ENDPOINT_FILTER:-}" ]; then
+    ROW=$(echo "$CHAIN_JSON" | jq -c --arg f "$SP_ENDPOINT_FILTER" \
+      '[.sps[] | select((.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0") and (.endpoint | test($f)))][0] // empty' 2>/dev/null || true)
+  fi
+  if [ -z "$ROW" ]; then
+    ROW=$(echo "$CHAIN_JSON" | jq -c '[.sps[] | select(.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0")][0] // empty' 2>/dev/null || true)
+  fi
+  EP_FIRST=$(echo "$ROW" | jq -r '.endpoint // empty' 2>/dev/null || true)
+  OP_FIRST=$(echo "$ROW" | jq -r '.operator_address // empty' 2>/dev/null || true)
   if [ -z "$EP_FIRST" ] || [ -z "$OP_FIRST" ]; then
     echo "  FAIL: cannot resolve an IN_SERVICE SP for moca-cmd sp head/get-price"
     FAIL=$((FAIL + 1))

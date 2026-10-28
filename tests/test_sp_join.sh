@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E2E: verify deployed SPs (devcontainer test_join verification parity, no create-sp).
+# E2E: verify deployed SPs (devcontainer test_join verification parity, no create-sp): chain
 # shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 
@@ -27,7 +27,9 @@ fi
 
 echo "  on-chain SPs: $CHAIN_SP_COUNT"
 
+# Every SP is IN_SERVICE or exiting; locally at most the two sp-exit targets are out of service.
 FAIL=0
+IN_SERVICE=0
 for i in $(seq 0 $((CHAIN_SP_COUNT - 1))); do
   OP=$(echo "$CHAIN_JSON" | jq -r ".sps[$i].operator_address // empty" 2>/dev/null)
   ST=$(echo "$CHAIN_JSON" | jq -r ".sps[$i].status // empty" 2>/dev/null)
@@ -35,59 +37,121 @@ for i in $(seq 0 $((CHAIN_SP_COUNT - 1))); do
   echo "  SP[$i] operator=$OP status=$ST"
   if [ -z "$OP" ]; then
     echo "    FAIL: empty operator"
-    FAIL=1
+    FAIL=$((FAIL + 1))
   fi
   if [ -z "$EP" ]; then
-    echo "    WARN: empty endpoint"
+    echo "    FAIL: empty endpoint"
+    FAIL=$((FAIL + 1))
   fi
-  if [ "$ST" != "STATUS_IN_SERVICE" ] && [ "$ST" != "0" ]; then
-    echo "    WARN: status not IN_SERVICE: $ST"
-  fi
+  case "$ST" in
+    STATUS_IN_SERVICE | 0) IN_SERVICE=$((IN_SERVICE + 1)) ;;
+    STATUS_GRACEFUL_EXITING | STATUS_FORCED_EXITING) echo "    NOTE: SP is exiting: $ST" ;;
+    *)
+      echo "    FAIL: status neither IN_SERVICE nor exiting: $ST"
+      FAIL=$((FAIL + 1))
+      ;;
+  esac
 
   Q=$(exec_mocad query sp storage-provider-by-operator-address "$OP" --node "$TM_RPC" --output json 2>/dev/null || echo "")
-  if [ -z "$Q" ] || [ "$Q" = "null" ]; then
-    echo "    WARN: storage-provider-by-operator-address query empty"
-  else
+  Q_OP=$(echo "$Q" | jq -r '.storage_provider.operator_address // .storageProvider.operator_address // empty' 2>/dev/null || true)
+  if [ -n "$OP" ] && [ "$(echo "$Q_OP" | tr '[:upper:]' '[:lower:]')" = "$(echo "$OP" | tr '[:upper:]' '[:lower:]')" ]; then
     echo "    OK: per-operator query works"
+  else
+    echo "    FAIL: storage-provider-by-operator-address returned operator '${Q_OP:-<none>}'"
+    FAIL=$((FAIL + 1))
   fi
 done
 
-echo "  docker SP containers:"
-list_sp_container_names | sed 's/^/    - /' || true
-
 VC="${VALIDATOR_CONTAINER:-validator-0}"
-for spn in $(list_sp_container_names); do
+SP_CONTAINERS="$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E '^sp-[0-9]+$' | sort -V || true)"
+RUNNING_SPS="$(list_sp_container_names)"
+echo "  docker SP containers:"
+for spn in $RUNNING_SPS; do
+  echo "    - $spn"
+done
+
+MIN_IN_SERVICE=1
+SP_CONTAINER_COUNT="$(printf '%s\n' "$SP_CONTAINERS" | grep -c . || true)"
+if [ "${SP_CONTAINER_COUNT:-0}" -gt 2 ]; then
+  MIN_IN_SERVICE=$((SP_CONTAINER_COUNT - 2))
+fi
+echo "  in service: $IN_SERVICE (need >= $MIN_IN_SERVICE)"
+if [ "$IN_SERVICE" -lt "$MIN_IN_SERVICE" ]; then
+  echo "    FAIL: only $IN_SERVICE storage provider(s) in service, expected at least $MIN_IN_SERVICE"
+  FAIL=$((FAIL + 1))
+fi
+
+# Health/readiness live on the probe server (container port 9402, host 9502+N); the gateway port answers 400 there.
+for spn in $SP_CONTAINERS; do
   idx="${spn#sp-}"
-  port=$((9033 + idx))
-  if docker ps --format '{{.Names}}' | grep -q "^${spn}$"; then
-    echo "  container $spn running"
-    hcode=$(docker exec "$VC" curl -s -o /dev/null -w "%{http_code}" -m 3 "http://${spn}:9033/-/healthy" 2>/dev/null || echo "000")
-    if [ "$hcode" = "200" ] || [ "$hcode" = "404" ]; then
-      echo "    OK: health via docker network (${spn}:9033) code=$hcode"
-    fi
+  if ! grep -qx "$spn" <<<"$RUNNING_SPS"; then
+    echo "  container $spn not running"
+    FAIL=$((FAIL + 1))
+    continue
   fi
-  code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "http://localhost:${port}/-/healthy" 2>/dev/null || echo "000")
-  if [ "$code" = "200" ] || [ "$code" = "404" ]; then
+  echo "  container $spn running"
+  for probe in healthy ready; do
+    hcode=$(docker exec "$VC" curl -s -o /dev/null -w "%{http_code}" -m 3 "http://${spn}:9402/-/${probe}" 2>/dev/null || true)
+    if [ "$hcode" = "200" ]; then
+      echo "    OK: ${probe} via docker network (${spn}:9402) code=$hcode"
+    else
+      echo "    FAIL: ${probe} via docker network (${spn}:9402) code=${hcode:-000}"
+      FAIL=$((FAIL + 1))
+    fi
+  done
+  port=$((9502 + idx))
+  code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 "http://localhost:${port}/-/healthy" 2>/dev/null || true)
+  if [ "$code" = "200" ]; then
     echo "    OK: localhost:${port}/-/healthy -> $code"
+  else
+    echo "    FAIL: localhost:${port}/-/healthy -> ${code:-000}"
+    FAIL=$((FAIL + 1))
   fi
 done
 
 if resolve_moca_cmd >/dev/null 2>&1; then
   OUT="$(exec_moca_cmd sp ls 2>/dev/null || true)"
-  if echo "$OUT" | grep -qiE "operator|IN_SERVICE|storage"; then
-    echo "  OK: moca-cmd sp ls"
+  MISSING=0
+  for op in $(echo "$CHAIN_JSON" | jq -r '.sps[].operator_address' 2>/dev/null); do
+    if ! grep -qi "$op" <<<"$OUT"; then
+      echo "  FAIL: moca-cmd sp ls does not list $op"
+      MISSING=$((MISSING + 1))
+    fi
+  done
+  if [ "$MISSING" -eq 0 ]; then
+    echo "  OK: moca-cmd sp ls lists all $CHAIN_SP_COUNT on-chain SPs"
   else
-    echo "  WARN: moca-cmd sp ls unexpected"
+    FAIL=$((FAIL + 1))
   fi
-  EP_FIRST=$(first_in_service_sp_endpoint 2>/dev/null || true)
-  if [ -n "$EP_FIRST" ]; then
+
+  # endpoint and operator must come from the same SP row: the listing order is not stable across queries
+  ROW=""
+  if [ -n "${SP_ENDPOINT_FILTER:-}" ]; then
+    ROW=$(echo "$CHAIN_JSON" | jq -c --arg f "$SP_ENDPOINT_FILTER" \
+      '[.sps[] | select((.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0") and (.endpoint | test($f)))][0] // empty' 2>/dev/null || true)
+  fi
+  if [ -z "$ROW" ]; then
+    ROW=$(echo "$CHAIN_JSON" | jq -c '[.sps[] | select(.status == "STATUS_IN_SERVICE" or .status == 0 or .status == "0")][0] // empty' 2>/dev/null || true)
+  fi
+  EP_FIRST=$(echo "$ROW" | jq -r '.endpoint // empty' 2>/dev/null || true)
+  OP_FIRST=$(echo "$ROW" | jq -r '.operator_address // empty' 2>/dev/null || true)
+  if [ -z "$EP_FIRST" ] || [ -z "$OP_FIRST" ]; then
+    echo "  FAIL: cannot resolve an IN_SERVICE SP for moca-cmd sp head/get-price"
+    FAIL=$((FAIL + 1))
+  else
     H="$(exec_moca_cmd sp head "$EP_FIRST" 2>/dev/null || true)"
-    if echo "$H" | grep -qiE "operator|SP info|endpoint"; then
+    if grep -qi "$OP_FIRST" <<<"$H"; then
       echo "  OK: moca-cmd sp head"
+    else
+      echo "  FAIL: moca-cmd sp head $EP_FIRST does not show operator $OP_FIRST: $(echo "$H" | head -2)"
+      FAIL=$((FAIL + 1))
     fi
     P="$(exec_moca_cmd sp get-price "$EP_FIRST" 2>/dev/null || true)"
-    if echo "$P" | grep -qiE "quota|price|bucket"; then
+    if grep -qi "read quota price" <<<"$P" && grep -qi "storage price" <<<"$P" && grep -qi "free quota" <<<"$P"; then
       echo "  OK: moca-cmd sp get-price"
+    else
+      echo "  FAIL: moca-cmd sp get-price $EP_FIRST is missing a price: $(echo "$P" | head -3)"
+      FAIL=$((FAIL + 1))
     fi
   fi
 else
@@ -97,6 +161,6 @@ fi
 if [ "$FAIL" -eq 0 ]; then
   echo "PASS: SP join visibility checks passed"
 else
-  echo "FAIL: SP verification had errors"
+  echo "FAIL: SP verification reported $FAIL failure(s)"
   exit 1
 fi

@@ -8,7 +8,7 @@ components:
     ref: 0517d9697333b4461c940c4f529467976f881051
   moca-storage-provider:
     repo: mocachain/moca-storage-provider
-    ref: d5b537f4a5598a7eecb0e14827623fdc72bcb559
+    ref: e2f86656bb097388a08538fd37aa8f25a29feb4a
   moca-cmd:
     repo: mocachain/moca-cmd
     ref: d49befb2047dfd7adab9fa4596101d72242372e3

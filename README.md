@@ -132,7 +132,7 @@ Source repo merges to main
 | `test_sp_config` | SP — `config.toml` checks (GRPC, HTTP, metrics, BlockSyncer, GVG fees, Server modules) |
 | `test_sp_join` | SP — per-operator queries, container health, `moca-cmd sp ls`, `head`, `get-price` |
 | `test_sp_exit` | SP — target SP acts as both primary and secondary, waits for GVG counts to drain, then verifies final SP removal from chain |
-| `test_sp_exit_empty_family_blocker` | SP — reproduces the empty-GVG family blocker and asserts `sp.complete.exit` remains blocked while the target SP stays on-chain |
+| `test_sp_exit_empty_family` | SP — deletes the target's last bucket so only an empty GVG family is left, then asserts the graceful exit still completes, the family moves off the exited SP and the auxiliary GVGs drop it |
 | `test_sp_delete` | SP — governance delete pre-checks only (no destructive tx by default) |
 
 Shared helpers live in `tests/libs/`. `exec_moca_cmd`, `exec_moca_cmd_signed`, `moca_cmd_tx` and `timed_object_get` run an optional `moca-cmd` (Docker `moca-cmd` container or `PATH`) and return non-zero on a non-zero exit or when it prints `run command error:` or the no-balance message (current `moca-cmd` builds exit 0 on failures). `cosmos_tx` broadcasts with `--gas auto --fees "$COSMOS_TX_FEES"` (default `10000000000000000amoca`).

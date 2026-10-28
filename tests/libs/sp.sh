@@ -338,13 +338,15 @@ wait_for_sp_removed_from_list() {
 
   deadline=$(( $(date +%s) + timeout ))
   while :; do
-    sp_json="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo '{}')"
-    if ! printf '%s\n' "$sp_json" | jq -e --arg op "$operator" '.sps[] | select(.operator_address == $op)' >/dev/null 2>&1; then
+    # a failed or unreadable query is not a removal
+    if sp_json="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null)" \
+      && printf '%s\n' "$sp_json" | jq -e '.sps | type == "array"' >/dev/null 2>&1 \
+      && ! printf '%s\n' "$sp_json" | jq -e --arg op "$operator" '.sps[] | select(.operator_address == $op)' >/dev/null 2>&1; then
       return 0
     fi
     now=$(date +%s)
     if [ "$now" -ge "$deadline" ]; then
-      echo "  wait_for_sp_removed_from_list: timeout after ${timeout}s; operator still present: ${operator}" >&2
+      echo "  wait_for_sp_removed_from_list: timeout after ${timeout}s; operator still present or SP list unreadable: ${operator}" >&2
       return 1
     fi
     sleep 3

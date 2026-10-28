@@ -135,7 +135,7 @@ Source repo merges to main
 | `test_sp_exit_empty_family_blocker` | SP — reproduces the empty-GVG family blocker and asserts `sp.complete.exit` remains blocked while the target SP stays on-chain |
 | `test_sp_delete` | SP — governance delete pre-checks only (no destructive tx by default) |
 
-`tests/lib.sh` exposes `resolve_moca_cmd` / `exec_moca_cmd` for optional `moca-cmd` in Docker (`moca-cmd` container) or on `PATH`.
+Shared helpers live in `tests/libs/`. `exec_moca_cmd`, `exec_moca_cmd_signed`, `moca_cmd_tx` and `timed_object_get` run an optional `moca-cmd` (Docker `moca-cmd` container or `PATH`) and return non-zero on a non-zero exit or when it prints `run command error:` or the no-balance message (current `moca-cmd` builds exit 0 on failures). `cosmos_tx` broadcasts with `--gas auto --fees "$COSMOS_TX_FEES"` (default `10000000000000000amoca`).
 
 ## Repository structure
 

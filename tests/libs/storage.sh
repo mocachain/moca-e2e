@@ -82,11 +82,12 @@ timed_object_get() {
 
   target="$(resolve_moca_cmd 2>/dev/null)" || return 127
   if [[ "$target" == docker:* ]]; then
-    docker exec "${target#docker:}" sh -lc '
+    # shellcheck disable=SC2016
+    _moca_cmd_run docker exec "${target#docker:}" sh -lc '
       timeout="$1"
       shift
       exec timeout "$timeout" moca-cmd -p /root/.moca-cmd/password.txt "$@"
-    ' sh "$timeout_seconds" "$@" 2>/dev/null
+    ' sh "$timeout_seconds" "$@"
     return $?
   fi
 

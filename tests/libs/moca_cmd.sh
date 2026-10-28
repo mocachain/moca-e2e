@@ -26,6 +26,18 @@ resolve_moca_cmd() {
   return 1
 }
 
+# _moca_cmd_run <cmd...>: echo stdout; fail on a non-zero exit or a moca-cmd failure line (moca-cmd exits 0 on errors)
+_moca_cmd_run() {
+  local out rc=0
+  out="$(exec "$@" 2>/dev/null)" || rc=$?
+  [ -z "$out" ] || printf '%s\n' "$out"
+  [ "$rc" -eq 0 ] || return "$rc"
+  case "$out" in
+    *"run command error:"* | *"The operator account have no balance"*) return 1 ;;
+  esac
+  return 0
+}
+
 # exec_moca_cmd: run moca-cmd with network flags (read-only queries, no signing).
 # -p is safe to pass unconditionally: moca-cmd only reads the password file when
 # IsQueryCmd=false (see client_moca.go NewClient); queries skip parseKeystore.
@@ -34,7 +46,7 @@ exec_moca_cmd() {
   target="$(resolve_moca_cmd 2>/dev/null)" || return 127
   if [[ "$target" == docker:* ]]; then
     local container="${target#docker:}"
-    docker exec "$container" moca-cmd -p /root/.moca-cmd/password.txt "$@" 2>/dev/null
+    _moca_cmd_run docker exec "$container" moca-cmd -p /root/.moca-cmd/password.txt "$@"
     return $?
   fi
   bin="${target#local:}"
@@ -46,7 +58,7 @@ exec_moca_cmd() {
   fi
   [ -n "$MOCA_CMD_HOME" ] && net_args+=(--home "$MOCA_CMD_HOME")
   [ -n "$MOCA_CMD_PASSWORD_FILE" ] && net_args+=(-p "$MOCA_CMD_PASSWORD_FILE")
-  "$bin" "${net_args[@]}" "$@" 2>/dev/null
+  _moca_cmd_run "$bin" "${net_args[@]}" "$@"
 }
 
 # exec_moca_cmd_signed: run moca-cmd with network flags + keystore (for write operations)
@@ -56,7 +68,7 @@ exec_moca_cmd_signed() {
   target="$(resolve_moca_cmd 2>/dev/null)" || return 127
   if [[ "$target" == docker:* ]]; then
     local container="${target#docker:}"
-    docker exec "$container" moca-cmd -p /root/.moca-cmd/password.txt "$@" 2>/dev/null
+    _moca_cmd_run docker exec "$container" moca-cmd -p /root/.moca-cmd/password.txt "$@"
     return $?
   fi
   bin="${target#local:}"
@@ -68,7 +80,7 @@ exec_moca_cmd_signed() {
   fi
   [ -n "$MOCA_CMD_HOME" ] && args+=(--home "$MOCA_CMD_HOME")
   [ -n "$MOCA_CMD_PASSWORD_FILE" ] && args+=(-p "$MOCA_CMD_PASSWORD_FILE")
-  "$bin" "${args[@]}" "$@" 2>/dev/null
+  _moca_cmd_run "$bin" "${args[@]}" "$@"
 }
 
 # moca_cmd_tx: signed call that additionally waits for the sender's mempool
@@ -77,14 +89,11 @@ exec_moca_cmd_signed() {
 # some ops — like `bucket create --tags=…` — also emit an extra implicit tx
 # whose hash isn't printed, so a plain-hash wait misses it).
 #
-# Echoes moca-cmd output to stdout, returns moca-cmd's rc. Sets rc=1 if
-# mempool didn't drain in 5s (chain stuck / tx got dropped) or, when
-# CHECK_TX_STATUS=1, the tx receipt shows status=0x0.
+# Echoes moca-cmd output; non-zero rc on a failed command, an undrained mempool, or (CHECK_TX_STATUS=1) a failed receipt.
 moca_cmd_tx() {
-  local out rc hash status
-  out=$(exec_moca_cmd_signed "$@")
-  rc=$?
-  hash=$(extract_evm_tx_hash "$out")
+  local out rc=0 hash status
+  out=$(exec_moca_cmd_signed "$@") || rc=$?
+  hash=$(extract_evm_tx_hash "$out") || true
   if [ -n "$hash" ]; then
     # Remote RPC pools need longer to converge: pending/latest counts can be
     # served by different upstreams, so equality lags a just-mined tx.

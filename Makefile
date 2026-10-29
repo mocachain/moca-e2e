@@ -12,6 +12,9 @@ help: ## Show this help
 test: ## Run E2E tests (ENV=local|devnet|testnet|mainnet, TOPOLOGY=topology/*.yaml)
 	./scripts/run-tests.sh $(ENV) $(STACK_FILE) $(TOPOLOGY)
 
+test-libs: ## Run the stubbed helper cases (no stack needed)
+	bash tests/libs/sp_test.sh
+
 test-minimal: ## Quick smoke test with 1 validator, 1 SP
 	./scripts/run-tests.sh local $(STACK_FILE) topology/minimal.yaml
 

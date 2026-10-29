@@ -182,6 +182,8 @@ Add test scripts to `tests/`:
 
 Each test receives `$1` = environment name, `$2` = config file path.
 
+Helpers in `tests/libs/` keep their stubbed cases in `tests/libs/*_test.sh`; `make test-libs` runs them, as does the CI build job.
+
 ## Roadmap
 
 - [ ] Slack/Discord notifications on CI failure

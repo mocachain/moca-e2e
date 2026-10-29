@@ -262,7 +262,7 @@ fi
 
 print_test_section "verify the empty family left the exited SP"
 if ! FAMILIES_AFTER="$(exec_mocad query virtualgroup global-virtual-group-families 1000 --node "$TM_RPC" --output json)" \
-  || ! printf '%s\n' "$FAMILIES_AFTER" | jq -e '.gvg_families | type == "array"' >/dev/null 2>&1; then
+  || ! printf '%s\n' "$FAMILIES_AFTER" | jq -e '(.gvg_families | type) == "array" and all(.gvg_families[]; type == "object" and (.id | type) != "null" and (.primary_sp_id | type) != "null")' >/dev/null 2>&1; then
   echo "FAIL: could not list GVG families after exit"
   exit 1
 fi
@@ -280,17 +280,23 @@ else
 fi
 
 print_test_section "verify the auxiliary GVGs no longer use the exited SP"
-if ! AUX_GVGS="$(exec_mocad query virtualgroup global-virtual-group-by-family-id "$SECONDARY_BUCKET_FAMILY_ID" --node "$TM_RPC" --output json)" \
-  || ! printf '%s\n' "$AUX_GVGS" | jq -e '.global_virtual_groups | type == "array" and length > 0' >/dev/null 2>&1; then
+if ! AUX_GVGS="$(exec_mocad query virtualgroup global-virtual-group-by-family-id "$SECONDARY_BUCKET_FAMILY_ID" --node "$TM_RPC" --output json)"; then
   echo "FAIL: could not read the auxiliary family's GVGs after exit"
   exit 1
 fi
-if printf '%s\n' "$AUX_GVGS" | jq -e --arg sp "$SP_ID" '[.global_virtual_groups[] | (.primary_sp_id | tostring), ((.secondary_sp_ids // [])[] | tostring)] | any(. == $sp)' >/dev/null 2>&1; then
-  echo "$AUX_GVGS"
-  echo "FAIL: the exited SP ${SP_ID} still serves an auxiliary GVG"
-  exit 1
-fi
-echo "  OK: auxiliary GVGs no longer include SP ${SP_ID}"
+case "$(printf '%s\n' "$AUX_GVGS" | gvg_usage_verdict "$SP_ID")" in
+  clear) echo "  OK: auxiliary GVGs no longer include SP ${SP_ID}" ;;
+  uses)
+    echo "$AUX_GVGS"
+    echo "FAIL: the exited SP ${SP_ID} still serves an auxiliary GVG"
+    exit 1
+    ;;
+  *)
+    echo "$AUX_GVGS"
+    echo "FAIL: the auxiliary family's GVG list is unreadable"
+    exit 1
+    ;;
+esac
 
 trap - EXIT
 cleanup

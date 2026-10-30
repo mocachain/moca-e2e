@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E2E: reproduce the empty-GVG family blocker during complete SP exit.
+# E2E: an SP whose bucket was deleted down to an empty GVG family still completes a graceful exit.
 # shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 
@@ -21,14 +21,14 @@ if [ "$ENV" = "mainnet" ]; then echo "SKIP: not safe for mainnet"; exit 0; fi
 if [ "$ENV" != "local" ]; then echo "SKIP: SP exit test only on local"; exit 0; fi
 
 if ! resolve_moca_cmd >/dev/null 2>&1; then
-  echo "SKIP: moca-cmd required for empty-family blocker test"
+  echo "SKIP: moca-cmd required for empty-family exit test"
   exit 0
 fi
 
 SP_JSON="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo '{}')"
 NUM_SPS="$(echo "$SP_JSON" | jq -r '.sps | length // 0' 2>/dev/null || echo "0")"
 if [ "$NUM_SPS" -lt 3 ]; then
-  echo "SKIP: need at least 3 SPs to exercise graceful exit blocker coverage"
+  echo "SKIP: need at least 3 SPs to exercise graceful exit with an empty family"
   exit 0
 fi
 
@@ -85,7 +85,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "Testing empty-family blocker on ${TARGET_SP} (sp_id=${SP_ID}, operator=${OPERATOR})..."
+echo "Testing graceful exit with an empty family on ${TARGET_SP} (sp_id=${SP_ID}, operator=${OPERATOR})..."
 
 print_test_section "create bucket on target SP"
 bucket_out="$(moca_cmd_tx bucket create --primarySP "$OPERATOR" "$BUCKET_URL" || true)"
@@ -246,42 +246,58 @@ else
   echo "  INFO: local mocad does not expose gvg-statistics-within-sp; final SP removal is used as the end-to-end completion signal"
 fi
 
-print_test_section "assert empty family leftover exists before complete exit"
-EMPTY_FAMILY_PRIMARY_SP_ID="$(gvg_family_primary_sp_id "$BUCKET_FAMILY_ID")"
-EMPTY_FAMILY_GVG_COUNT="$(gvg_family_gvg_count "$BUCKET_FAMILY_ID")"
-EMPTY_FAMILY_GVG_STORED_SIZE="$(gvg_stored_size_by_family "$BUCKET_FAMILY_ID")"
-echo "  empty_family_id=${BUCKET_FAMILY_ID}"
-echo "  empty_family_primary_sp_id=${EMPTY_FAMILY_PRIMARY_SP_ID:-unknown}"
-echo "  empty_family_gvg_count=${EMPTY_FAMILY_GVG_COUNT}"
-echo "  empty_family_gvg_stored_size=${EMPTY_FAMILY_GVG_STORED_SIZE:-unknown}"
-assert_eq "$EMPTY_FAMILY_PRIMARY_SP_ID" "$SP_ID" "empty family remains owned by exiting SP before complete exit"
-assert_eq "$EMPTY_FAMILY_GVG_COUNT" "1" "empty family retains one empty GVG before complete exit"
-assert_eq "$EMPTY_FAMILY_GVG_STORED_SIZE" "0" "empty family's remaining GVG stays empty before complete exit"
-
 print_test_section "complete final SP exit"
-complete_out="$(exec_sp_cmd "$TARGET_SP" -c /root/.moca-sp/config.toml sp.complete.exit --operatorAddress "$OPERATOR" 2>&1 || true)"
-echo "$complete_out"
-if wait_for_sp_removed_from_list "$OPERATOR" 30; then
-  echo "FAIL: target SP unexpectedly completed exit even though only an empty family remained"
-  exit 1
+# the exit scheduler hands off the empty family first; a manual complete exit sent earlier is rejected
+if wait_for_sp_removed_from_list "$OPERATOR" 120; then
+  echo "  OK: target SP completed final exit automatically"
+else
+  complete_out="$(exec_sp_cmd "$TARGET_SP" -c /root/.moca-sp/config.toml sp.complete.exit --operatorAddress "$OPERATOR" 2>&1 || true)"
+  echo "$complete_out"
+  if ! wait_for_sp_removed_from_list "$OPERATOR" 180; then
+    echo "FAIL: target SP is still in the chain SP list; the empty family blocked its exit"
+    exit 1
+  fi
+  echo "  OK: target SP removed from the chain SP list"
 fi
-EMPTY_FAMILY_PRIMARY_SP_ID="$(gvg_family_primary_sp_id "$BUCKET_FAMILY_ID")"
-EMPTY_FAMILY_GVG_COUNT="$(gvg_family_gvg_count "$BUCKET_FAMILY_ID")"
-EMPTY_FAMILY_GVG_STORED_SIZE="$(gvg_stored_size_by_family "$BUCKET_FAMILY_ID")"
-assert_eq "$EMPTY_FAMILY_PRIMARY_SP_ID" "$SP_ID" "empty family still blocks exit after attempted complete exit"
-assert_eq "$EMPTY_FAMILY_GVG_COUNT" "1" "blocking family still retains one empty GVG after attempted complete exit"
-assert_eq "$EMPTY_FAMILY_GVG_STORED_SIZE" "0" "blocking family's remaining GVG stays empty after attempted complete exit"
-echo "  OK: reproduced empty-family blocker; target SP is still present after attempted complete exit"
 
-print_test_section "verify chain SP list after complete exit"
-SP_JSON_AFTER="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo '{}')"
-printf '%s\n' "$SP_JSON_AFTER" | jq -r '.sps[] | "  id=\(.id) status=\(.status) operator=\(.operator_address)"' 2>/dev/null || true
-if ! printf '%s\n' "$SP_JSON_AFTER" | jq -e --arg op "$OPERATOR" '.sps[] | select(.operator_address == $op)' >/dev/null 2>&1; then
-  echo "FAIL: target SP disappeared from chain SP list in empty-family blocker mode"
+print_test_section "verify the empty family left the exited SP"
+if ! FAMILIES_AFTER="$(exec_mocad query virtualgroup global-virtual-group-families 1000 --node "$TM_RPC" --output json)" \
+  || ! printf '%s\n' "$FAMILIES_AFTER" | jq -e '(.gvg_families | type) == "array" and all(.gvg_families[]; type == "object" and (.id | type) != "null" and (.primary_sp_id | type) != "null")' >/dev/null 2>&1; then
+  echo "FAIL: could not list GVG families after exit"
   exit 1
 fi
-echo "  OK: target SP is still present in the chain SP list because empty family blocks final exit"
+FAMILY_PRIMARY_AFTER="$(printf '%s\n' "$FAMILIES_AFTER" | jq -r --arg id "$BUCKET_FAMILY_ID" '.gvg_families[] | select((.id | tostring) == $id) | .primary_sp_id | tostring')"
+if [ -z "$FAMILY_PRIMARY_AFTER" ]; then
+  echo "  OK: empty family ${BUCKET_FAMILY_ID} was removed with the exit"
+else
+  assert_ne "$FAMILY_PRIMARY_AFTER" "$SP_ID" "empty family no longer belongs to the exited SP"
+  if ! SP_JSON_AFTER="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json)" \
+    || ! printf '%s\n' "$SP_JSON_AFTER" | jq -e --arg sid "$FAMILY_PRIMARY_AFTER" '.sps[] | select((.id | tostring) == $sid)' >/dev/null 2>&1; then
+    echo "FAIL: empty family ${BUCKET_FAMILY_ID} moved to SP ${FAMILY_PRIMARY_AFTER}, which is not in the chain SP list"
+    exit 1
+  fi
+  echo "  OK: empty family ${BUCKET_FAMILY_ID} moved to SP ${FAMILY_PRIMARY_AFTER}"
+fi
+
+print_test_section "verify the auxiliary GVGs no longer use the exited SP"
+if ! AUX_GVGS="$(exec_mocad query virtualgroup global-virtual-group-by-family-id "$SECONDARY_BUCKET_FAMILY_ID" --node "$TM_RPC" --output json)"; then
+  echo "FAIL: could not read the auxiliary family's GVGs after exit"
+  exit 1
+fi
+case "$(printf '%s\n' "$AUX_GVGS" | gvg_usage_verdict "$SP_ID")" in
+  clear) echo "  OK: auxiliary GVGs no longer include SP ${SP_ID}" ;;
+  uses)
+    echo "$AUX_GVGS"
+    echo "FAIL: the exited SP ${SP_ID} still serves an auxiliary GVG"
+    exit 1
+    ;;
+  *)
+    echo "$AUX_GVGS"
+    echo "FAIL: the auxiliary family's GVG list is unreadable"
+    exit 1
+    ;;
+esac
 
 trap - EXIT
 cleanup
-echo "PASS: empty-family blocker reproduced successfully"
+echo "PASS: an empty family did not block the graceful exit"

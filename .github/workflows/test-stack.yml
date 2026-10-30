@@ -57,6 +57,9 @@ jobs:
       - name: Make scripts executable
         run: chmod +x scripts/*.sh
 
+      - name: Run helper unit tests
+        run: bash tests/libs/sp_test.sh
+
       - name: Clone repos at stack.yaml refs
         timeout-minutes: 5
         run: ./scripts/clone-repos.sh stack.yaml

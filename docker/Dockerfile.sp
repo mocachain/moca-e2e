@@ -1,4 +1,6 @@
-FROM golang:1.26-bookworm AS builder
+ARG GO_IMAGE=golang:1.26.10-trixie
+ARG BASE_IMAGE=debian:trixie-slim
+FROM ${GO_IMAGE} AS builder
 
 ARG TARGETARCH
 ARG GITHUB_TOKEN=""
@@ -18,7 +20,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     GOARCH=${TARGETARCH} \
     make build
 
-FROM debian:bookworm-slim
+FROM ${BASE_IMAGE}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl jq default-mysql-client openssl \

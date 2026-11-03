@@ -37,6 +37,9 @@ concurrency:
 env:
   GHCR_REPO: ghcr.io/${{ github.repository_owner }}/moca-e2e
   STACK_FILE: stack-1.4.yaml
+  # The 1.4 line builds with Go 1.25: its bytedance/sonic v1.14 does not compile on 1.26.
+  GO_IMAGE: golang:1.25-bookworm
+  BASE_IMAGE: debian:bookworm-slim
 
 jobs:
   build:

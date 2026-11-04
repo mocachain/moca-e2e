@@ -27,6 +27,13 @@ elif [ -n "${GITHUB_TOKEN:-}" ]; then
   TOKEN_ARG="--build-arg GITHUB_TOKEN=${GITHUB_TOKEN}"
 fi
 
+# Base images. The Dockerfile defaults build the main stack (Go 1.26.10 on
+# trixie); a stack on an older Go line sets GO_IMAGE and BASE_IMAGE instead
+# (test-stack-1.4.yml).
+GO_ARG=""; BASE_ARG=""
+[ -n "${GO_IMAGE:-}" ] && GO_ARG="--build-arg GO_IMAGE=${GO_IMAGE}"
+[ -n "${BASE_IMAGE:-}" ] && BASE_ARG="--build-arg BASE_IMAGE=${BASE_IMAGE}"
+
 # Cache keys = the source commit of each built image. Shard (pull) jobs receive
 # these as env (they don't clone); otherwise read them from the cloned repos.
 sha_of() { git -C "$BUILD_DIR/$1" rev-parse --short=12 HEAD 2>/dev/null || echo local; }
@@ -77,13 +84,13 @@ fi
 
 # mocad, cosmovisor and genesis-init derive from the moca chain repo.
 docker_image mocad-local:latest mocad "$MOCA_SHA" \
-  -f "$ROOT_DIR/docker/Dockerfile.mocad" --build-arg TARGETARCH="$ARCH" $TOKEN_ARG "$ROOT_DIR"
+  -f "$ROOT_DIR/docker/Dockerfile.mocad" --build-arg TARGETARCH="$ARCH" $TOKEN_ARG $GO_ARG $BASE_ARG "$ROOT_DIR"
 
 docker_image mocad-cosmovisor:latest cosmovisor "$MOCA_SHA" \
-  -f "$ROOT_DIR/docker/Dockerfile.cosmovisor" --build-arg TARGETARCH="$ARCH" $TOKEN_ARG "$ROOT_DIR"
+  -f "$ROOT_DIR/docker/Dockerfile.cosmovisor" --build-arg TARGETARCH="$ARCH" $TOKEN_ARG $GO_ARG $BASE_ARG "$ROOT_DIR"
 
 docker_image moca-sp-local:latest sp "$SP_SHA" \
-  -f "$ROOT_DIR/docker/Dockerfile.sp" --build-arg TARGETARCH="$ARCH" $TOKEN_ARG "$ROOT_DIR"
+  -f "$ROOT_DIR/docker/Dockerfile.sp" --build-arg TARGETARCH="$ARCH" $TOKEN_ARG $GO_ARG $BASE_ARG "$ROOT_DIR"
 
 # genesis-init COPYs --from=mocad-local:latest, present in the daemon from the
 # mocad step above (built or pulled). Key it on the moca commit too — and on
@@ -91,10 +98,10 @@ docker_image moca-sp-local:latest sp "$SP_SHA" \
 # docker/ recipe tree, so genesis changes rebuild instead of pulling stale.
 GENESIS_HASH="$(git -C "$ROOT_DIR" rev-parse --short=12 "HEAD:scripts/init-genesis.sh" 2>/dev/null || echo g0)"
 docker_image moca-genesis-init:latest genesis-init "${MOCA_SHA}-${GENESIS_HASH}" \
-  -f "$ROOT_DIR/docker/Dockerfile.init" "$ROOT_DIR"
+  -f "$ROOT_DIR/docker/Dockerfile.init" $BASE_ARG "$ROOT_DIR"
 
 docker_image moca-cmd-local:latest moca-cmd "$CMD_SHA" \
-  -f "$ROOT_DIR/docker/Dockerfile.moca-cmd" --build-arg TARGETARCH="$ARCH" $TOKEN_ARG "$ROOT_DIR"
+  -f "$ROOT_DIR/docker/Dockerfile.moca-cmd" --build-arg TARGETARCH="$ARCH" $TOKEN_ARG $GO_ARG $BASE_ARG "$ROOT_DIR"
 
 echo "=== Images ready ==="
 docker images | grep -E "(mocad-local|mocad-cosmovisor|moca-sp-local|moca-genesis-init|moca-cmd-local)" || true

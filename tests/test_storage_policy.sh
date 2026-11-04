@@ -54,6 +54,7 @@ run_mocad_policy() {
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
     --gas auto --gas-adjustment 1.5 \
+    --fees "${COSMOS_TX_FEES:-10000000000000000amoca}" \
     -y 2>/dev/null || {
     echo "SKIP: mocad-only path cannot complete bucket create (install moca-cmd)"
     exit 0
@@ -68,6 +69,7 @@ run_mocad_policy() {
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
     --gas auto --gas-adjustment 1.5 \
+    --fees "${COSMOS_TX_FEES:-10000000000000000amoca}" \
     -y 2>/dev/null || true
   wait_for_tx 3
 
@@ -77,6 +79,7 @@ run_mocad_policy() {
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
     --gas auto --gas-adjustment 1.5 \
+    --fees "${COSMOS_TX_FEES:-10000000000000000amoca}" \
     -y 2>/dev/null || true
   echo "PASS: storage permission policy (mocad path)"
 }
@@ -117,7 +120,7 @@ run_moca_cmd_policy_full() {
   print_test_section "create bucket"
   local out
   out=$(exec_moca_cmd_signed bucket create --primarySP "$PRIMARY_SP" "$bucket_url" || true)
-  if ! echo "$out" | grep -q "make_bucket:\|$bucket_name"; then
+  if ! grep -qF "make_bucket: ${bucket_name}" <<<"$out"; then
     echo "FAIL: bucket create failed for policy test"
     echo "$out" | head -5
     exit 1

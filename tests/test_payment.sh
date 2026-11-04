@@ -113,6 +113,7 @@ run_mocad_payment() {
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
     --gas auto --gas-adjustment 1.5 \
+    --fees "${COSMOS_TX_FEES:-10000000000000000amoca}" \
     -y 2>/dev/null || echo "FAILED")
 
   if echo "$CREATE_RESULT" | grep -q "FAILED\|Error\|error"; then
@@ -175,6 +176,7 @@ run_mocad_payment() {
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
     --gas auto --gas-adjustment 1.5 \
+    --fees "${COSMOS_TX_FEES:-10000000000000000amoca}" \
     -y 2>/dev/null || {
     echo "  FAIL: deposit tx broadcast failed"
     exit 1
@@ -196,6 +198,7 @@ run_mocad_payment() {
     --chain-id "$CHAIN_ID" \
     --node "$TM_RPC" \
     --gas auto --gas-adjustment 1.5 \
+    --fees "${COSMOS_TX_FEES:-10000000000000000amoca}" \
     -y 2>/dev/null || {
     echo "  FAIL: withdraw tx broadcast failed"
     exit 1

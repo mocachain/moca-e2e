@@ -106,7 +106,7 @@ echo "Testing complete SP exit on ${TARGET_SP} (sp_id=${SP_ID}, operator=${OPERA
 
 print_test_section "create bucket on target SP"
 bucket_out="$(moca_cmd_tx bucket create --primarySP "$OPERATOR" "$BUCKET_URL" || true)"
-if ! echo "$bucket_out" | grep -q "$BUCKET_NAME"; then
+if ! grep -qF "make_bucket: ${BUCKET_NAME}" <<<"$bucket_out"; then
   echo "$bucket_out"
   echo "FAIL: bucket create did not succeed on target SP"
   exit 1

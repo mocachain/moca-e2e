@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# E2E test: verify storage providers are registered and in service
+# E2E test: verify storage providers are registered and in service.
+# local: every SP IN_SERVICE or exiting, at most the two sp-exit targets out of service; live: one SP serving
 # shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 
@@ -25,6 +26,9 @@ if [ "$NUM_SPS" -le 0 ]; then
 fi
 
 # Check each SP's status
+IN_SERVICE=0
+EXITING=0
+FAILED=0
 for i in $(seq 0 $((NUM_SPS - 1))); do
   SP_ADDR=$(echo "$SP_JSON" | jq -r ".sps[$i].operator_address" 2>/dev/null)
   SP_STATUS=$(echo "$SP_JSON" | jq -r ".sps[$i].status" 2>/dev/null)
@@ -32,10 +36,45 @@ for i in $(seq 0 $((NUM_SPS - 1))); do
 
   echo "  SP $i: addr=$SP_ADDR status=$SP_STATUS endpoint=$SP_ENDPOINT"
 
-  if [ "$SP_STATUS" != "STATUS_IN_SERVICE" ] && [ "$SP_STATUS" != "0" ]; then
-    echo "    WARN: SP $i not in service (status: $SP_STATUS)"
+  if [ -z "$SP_ADDR" ] || [ "$SP_ADDR" = "null" ] || [ -z "$SP_ENDPOINT" ] || [ "$SP_ENDPOINT" = "null" ]; then
+    echo "    FAIL: SP $i has no operator address or endpoint"
+    FAILED=$((FAILED + 1))
   fi
+
+  case "$SP_STATUS" in
+    STATUS_IN_SERVICE | 0) IN_SERVICE=$((IN_SERVICE + 1)) ;;
+    STATUS_GRACEFUL_EXITING | STATUS_FORCED_EXITING)
+      EXITING=$((EXITING + 1))
+      echo "    NOTE: SP $i is exiting (status: $SP_STATUS)"
+      ;;
+    *)
+      if [ "$ENV" = "local" ]; then
+        echo "    FAIL: SP $i is neither in service nor exiting (status: $SP_STATUS)"
+        FAILED=$((FAILED + 1))
+      else
+        echo "    WARN: SP $i not in service (status: $SP_STATUS)"
+      fi
+      ;;
+  esac
 done
+
+# Local: each sp-N container is an SP and only the two sp-exit tests take one out of service.
+MIN_IN_SERVICE=1
+if [ "$ENV" = "local" ]; then
+  SP_CONTAINERS=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -Ec '^sp-[0-9]+$' || true)
+  if [ "${SP_CONTAINERS:-0}" -gt 2 ]; then
+    MIN_IN_SERVICE=$((SP_CONTAINERS - 2))
+  fi
+fi
+echo "  In service: $IN_SERVICE, exiting: $EXITING (need >= $MIN_IN_SERVICE in service)"
+if [ "$IN_SERVICE" -lt "$MIN_IN_SERVICE" ]; then
+  echo "  FAIL: only $IN_SERVICE storage provider(s) in service, expected at least $MIN_IN_SERVICE"
+  FAILED=$((FAILED + 1))
+fi
+if [ "$FAILED" -gt 0 ]; then
+  echo "  FAIL: SP registration checks reported $FAILED failure(s)"
+  exit 1
+fi
 
 # Query SP params
 SP_PARAMS=$(exec_mocad query sp params --node "$TM_RPC" --output json 2>/dev/null || echo "{}")

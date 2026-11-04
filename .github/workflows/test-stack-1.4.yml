@@ -37,6 +37,9 @@ concurrency:
 env:
   GHCR_REPO: ghcr.io/${{ github.repository_owner }}/moca-e2e
   STACK_FILE: stack-1.4.yaml
+  # The 1.4 line builds with Go 1.25: its bytedance/sonic v1.14 does not compile on 1.26.
+  GO_IMAGE: golang:1.25-bookworm
+  BASE_IMAGE: debian:bookworm-slim
 
 jobs:
   build:
@@ -129,7 +132,9 @@ jobs:
       - name: Run genesis init
         timeout-minutes: 5
         run: |
-          $COMPOSE up genesis-init 2>&1 | tail -20
+          # compose up exits 0 even when the container fails; --exit-code-from + pipefail fail the step.
+          set -o pipefail
+          $COMPOSE up --exit-code-from genesis-init genesis-init 2>&1 | tail -20
           echo "Genesis init complete"
 
       - name: Start validators and MySQL

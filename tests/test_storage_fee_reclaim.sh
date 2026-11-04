@@ -209,7 +209,11 @@ fi
 echo "  deposit reflected: static=$STATIC_0, owner bank down by >= deposit"
 
 print_test_section "store: bucket + sealed object billed to the payment account"
-OUT=$(exec_moca_cmd_signed bucket create --primarySP "$PRIMARY_SP" --paymentAddress "$PA_ADDR" "$BUCKET_URL")
+OUT=$(exec_moca_cmd_signed bucket create --primarySP "$PRIMARY_SP" --paymentAddress "$PA_ADDR" "$BUCKET_URL") || {
+  echo "$OUT"
+  echo "FAIL: bucket create failed"
+  exit 1
+}
 assert_tx_ok "$OUT" "create bucket"
 wait_for_block 2
 # The bucket must actually bill the dedicated account, on chain. LCD first:

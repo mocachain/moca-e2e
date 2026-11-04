@@ -331,20 +331,53 @@ wait_for_gvg_stat_value() {
   done
 }
 
+# reads the chain SP list on stdin; prints present, absent or malformed
+sp_list_verdict() {
+  local operator="${1:?operator required}" verdict
+  verdict="$(jq -r --arg op "$operator" '
+    if (.sps | type) != "array" or any(.sps[]; type != "object" or (.operator_address | type) != "string") then "malformed"
+    elif any(.sps[]; .operator_address == $op) then "present"
+    else "absent" end' 2>/dev/null)" || verdict=""
+  case "$verdict" in
+    present|absent) printf '%s\n' "$verdict" ;;
+    *) echo malformed ;;
+  esac
+}
+
+# reads a family's GVG list on stdin; prints uses, clear or malformed for an SP id
+gvg_usage_verdict() {
+  local sp_id="${1:?sp id required}" verdict
+  verdict="$(jq -r --arg sp "$sp_id" '
+    def id_like: type == "number" or type == "string";
+    if (.global_virtual_groups | type) != "array" or (.global_virtual_groups | length) == 0
+      or any(.global_virtual_groups[]; type != "object" or (.primary_sp_id | id_like | not)
+        or (.secondary_sp_ids | type) != "array" or any(.secondary_sp_ids[]; id_like | not)) then "malformed"
+    elif any(.global_virtual_groups[]; (.primary_sp_id | tostring) == $sp or any(.secondary_sp_ids[]; tostring == $sp)) then "uses"
+    else "clear" end' 2>/dev/null)" || verdict=""
+  case "$verdict" in
+    uses|clear) printf '%s\n' "$verdict" ;;
+    *) echo malformed ;;
+  esac
+}
+
 wait_for_sp_removed_from_list() {
   local operator="${1:?operator required}"
   local timeout="${2:-180}"
-  local deadline now sp_json
+  local deadline now sp_json verdict
 
   deadline=$(( $(date +%s) + timeout ))
   while :; do
-    sp_json="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null || echo '{}')"
-    if ! printf '%s\n' "$sp_json" | jq -e --arg op "$operator" '.sps[] | select(.operator_address == $op)' >/dev/null 2>&1; then
+    # only a well-formed list without the operator counts as a removal
+    verdict=malformed
+    if sp_json="$(exec_mocad query sp storage-providers --node "$TM_RPC" --output json 2>/dev/null)"; then
+      verdict="$(printf '%s\n' "$sp_json" | sp_list_verdict "$operator")"
+    fi
+    if [ "$verdict" = "absent" ]; then
       return 0
     fi
     now=$(date +%s)
     if [ "$now" -ge "$deadline" ]; then
-      echo "  wait_for_sp_removed_from_list: timeout after ${timeout}s; operator still present: ${operator}" >&2
+      echo "  wait_for_sp_removed_from_list: timeout after ${timeout}s; operator ${operator} is ${verdict}" >&2
       return 1
     fi
     sleep 3

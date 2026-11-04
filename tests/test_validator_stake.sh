@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E2E test: verify 6/6 validators bonded with equal stake distribution
+# E2E test: verify 6/6 validators bonded with equal stake distribution (all bonded, one common
 # shellcheck shell=bash source-path=SCRIPTDIR
 set -euo pipefail
 
@@ -32,16 +32,26 @@ UNIQUE_STAKES=$(echo "$STAKES" | wc -l | tr -d ' ')
 echo "  Validators: $TOTAL, Bonded: $BONDED"
 echo "  Unique stake amounts: $UNIQUE_STAKES"
 
-if [ "$UNIQUE_STAKES" -eq 1 ]; then
-  STAKE_AMOUNT=$(echo "$STAKES" | head -1)
-  echo "  All validators have equal stake: $STAKE_AMOUNT"
+if [ "$ENV" = "local" ]; then
+  # The local topology bonds every validator at one genesis stake: all must be bonded with equal stake.
+  EXPECTED=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -Ec '^validator-[0-9]+$' || true)
+  if [ "${EXPECTED:-0}" -gt 0 ]; then
+    if [ "$TOTAL" -lt "$EXPECTED" ]; then
+      echo "  FAIL: $TOTAL validators in the set, $EXPECTED validator containers running"
+      exit 1
+    fi
+    print_success "Validator set covers every validator container ($TOTAL >= $EXPECTED)"
+  fi
+  assert_eq "$BONDED" "$TOTAL" "All validators bonded"
+  assert_eq "$UNIQUE_STAKES" 1 "All validators have equal stake ($(echo "$STAKES" | head -1))"
 else
-  echo "  WARN: Validators have unequal stakes:"
-  echo "$VALS_JSON" | jq -r '.validators[] | "    \(.description.moniker): \(.tokens)"'
-fi
-
-if [ "$BONDED" -lt "$TOTAL" ]; then
-  echo "  WARN: Not all validators are bonded in $ENV ($BONDED/$TOTAL)"
+  if [ "$UNIQUE_STAKES" -ne 1 ]; then
+    echo "  WARN: Validators have unequal stakes:"
+    echo "$VALS_JSON" | jq -r '.validators[] | "    \(.description.moniker): \(.tokens)"'
+  fi
+  if [ "$BONDED" -lt "$TOTAL" ]; then
+    echo "  WARN: Not all validators are bonded in $ENV ($BONDED/$TOTAL)"
+  fi
 fi
 
 assert_gt "$BONDED" 0 "At least one bonded validator" || exit 1

@@ -14,15 +14,18 @@ CHAIN_ID="${CHAIN_ID:-moca_5151-1}"
 
 echo "=== Starting storage provider: $SP_NAME ==="
 
-# Wait for MySQL
+# Wait for MySQL. --skip-ssl: the MariaDB 11 client in trixie verifies the server
+# certificate by default, and the mysql:8 server's is self-signed; the compose
+# network is private.
 echo "Waiting for MySQL at $MYSQL_HOST:$MYSQL_PORT..."
 for i in $(seq 1 60); do
-  if mysqladmin ping -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" --silent 2>/dev/null; then
+  if mariadb-admin ping -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" --skip-ssl --silent 2>/dev/null; then
     echo "MySQL is ready."
     break
   fi
   if [ "$i" -eq 60 ]; then
     echo "Error: MySQL not ready after 60s"
+    mariadb-admin ping -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" --skip-ssl 2>&1 | head -3
     exit 1
   fi
   sleep 1
@@ -32,7 +35,7 @@ done
 SP_INDEX=$(echo "$SP_NAME" | grep -o '[0-9]*$')
 DB_NAME="sp_${SP_INDEX}"
 BS_DB_NAME="bs_${SP_INDEX}"
-mysql -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" \
+mariadb -h "$MYSQL_HOST" -P "$MYSQL_PORT" -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" --skip-ssl \
   -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME}; CREATE DATABASE IF NOT EXISTS ${BS_DB_NAME};" 2>/dev/null
 
 # Wait for chain RPC

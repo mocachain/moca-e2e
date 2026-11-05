@@ -58,17 +58,33 @@ exec_moca_cmd() {
   fi
   [ -n "$MOCA_CMD_HOME" ] && net_args+=(--home "$MOCA_CMD_HOME")
   [ -n "$MOCA_CMD_PASSWORD_FILE" ] && net_args+=(-p "$MOCA_CMD_PASSWORD_FILE")
-  _moca_cmd_run "$bin" "${net_args[@]}" "$@"
+  _moca_cmd_run "$bin" ${net_args[@]+"${net_args[@]}"} "$@"
 }
 
 # exec_moca_cmd_signed: run moca-cmd with network flags + keystore (for write operations)
 # IMPORTANT: do NOT pass --host — moca-cmd resolves SP endpoints from chain automatically
+#
+# MOCA_CMD_DEADLINE=<seconds> caps the call. `object put/update --delegate` poll HeadObject
+# until SEALED with no timeout of their own, so an object that never seals would hang the
+# whole suite. The cap wraps the moca-cmd process itself in timeout(1) — inside the sidecar
+# on the docker path, on the host otherwise — which TERMs its process group at the deadline,
+# KILLs 5s later, and exits 124 (137 when the KILL was needed). An invalid deadline, or a
+# host without GNU timeout, fails before anything runs.
 exec_moca_cmd_signed() {
-  local target bin
+  local target bin cap=()
   target="$(resolve_moca_cmd 2>/dev/null)" || return 127
+  if [ -n "${MOCA_CMD_DEADLINE:-}" ]; then
+    if [[ ! "$MOCA_CMD_DEADLINE" =~ ^[1-9][0-9]*$ ]]; then
+      echo "  ERROR: MOCA_CMD_DEADLINE must be a whole number of seconds, got '${MOCA_CMD_DEADLINE}'" >&2
+      return 2
+    fi
+    local tbin
+    tbin="$(moca_cmd_timeout_bin "$target")" || return $?
+    cap=("$tbin" -k 5 "$MOCA_CMD_DEADLINE")
+  fi
   if [[ "$target" == docker:* ]]; then
     local container="${target#docker:}"
-    _moca_cmd_run docker exec "$container" moca-cmd -p /root/.moca-cmd/password.txt "$@"
+    _moca_cmd_run docker exec "$container" ${cap[@]+"${cap[@]}"} moca-cmd -p /root/.moca-cmd/password.txt "$@"
     return $?
   fi
   bin="${target#local:}"
@@ -80,7 +96,20 @@ exec_moca_cmd_signed() {
   fi
   [ -n "$MOCA_CMD_HOME" ] && args+=(--home "$MOCA_CMD_HOME")
   [ -n "$MOCA_CMD_PASSWORD_FILE" ] && args+=(-p "$MOCA_CMD_PASSWORD_FILE")
-  _moca_cmd_run "$bin" "${args[@]}" "$@"
+  _moca_cmd_run ${cap[@]+"${cap[@]}"} "$bin" ${args[@]+"${args[@]}"} "$@"
+}
+
+# moca_cmd_timeout_bin <target>: the timeout(1) that runs next to moca-cmd for MOCA_CMD_DEADLINE:
+# plain `timeout` inside the debian sidecar; GNU timeout, or Homebrew's gtimeout, on the host.
+moca_cmd_timeout_bin() {
+  if [[ "$1" == docker:* ]]; then
+    echo timeout
+    return 0
+  fi
+  command -v timeout 2>/dev/null && return 0
+  command -v gtimeout 2>/dev/null && return 0
+  echo "  ERROR: GNU timeout(1) not found on PATH (macOS: brew install coreutils); MOCA_CMD_DEADLINE needs it" >&2
+  return 127
 }
 
 # moca_cmd_tx: signed call that additionally waits for the sender's mempool

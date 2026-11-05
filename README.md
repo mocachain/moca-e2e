@@ -118,7 +118,7 @@ Source repo merges to main
 | `test_cross_module` | Bank, Staking, Distribution — sequential txs across modules |
 | `test_storage_bucket` | Storage — bucket create/query/delete via `mocad`; if `moca-cmd` is available, full bucket CLI flow |
 | `test_storage_object` | Storage — full object CLI flow (`put`, `head`, `setTag`, `ls`, cleanup) when `moca-cmd` is available; else bucket-only `mocad` smoke |
-| `test_storage_object_delegated` | Storage — delegated object flow via `moca-cmd`: `object put --delegate` (the SP creates the object on chain, `MsgDelegateCreateObject`) → sealed → head + get/sha256; `object update --delegate` (`MsgDelegateUpdateObjectContent`) → re-sealed → get/sha256; the uploader signs no tx (nonce pinned). Skips when `moca-cmd` lacks `--delegate` |
+| `test_storage_object_delegated` | Storage — delegated object flow via `moca-cmd`: `object put --delegate` (the SP creates the object on chain, `MsgDelegateCreateObject`) → sealed → head + get/sha256; `object update --delegate` (`MsgDelegateUpdateObjectContent`) → re-sealed → get/sha256; the uploader signs no tx (nonce pinned). Each delegated call is capped at `DELEGATE_SEAL_DEADLINE` seconds (default 180) so a seal that never lands fails the test instead of hanging the suite. Skips when `moca-cmd` lacks `--delegate` |
 | `test_storage_object_failover` | Storage — force the local primary SP into exit, pause its endpoint, manually run successor `swapIn/recover-vgf/completeSwapIn`, and verify object reads remain available |
 | `test_storage_object_seal` | Storage — poll `object get-progress` until sealed, then head/list |
 | `test_storage_group` | Storage — group lifecycle via `mocad`; if `moca-cmd` is available, full group CLI flow |
@@ -135,7 +135,7 @@ Source repo merges to main
 | `test_sp_exit_empty_family` | SP — deletes the target's last bucket so only an empty GVG family is left, then asserts the graceful exit still completes, the family moves off the exited SP and the auxiliary GVGs drop it |
 | `test_sp_delete` | SP — governance delete pre-checks only (no destructive tx by default) |
 
-Shared helpers live in `tests/libs/`. `exec_moca_cmd`, `exec_moca_cmd_signed`, `moca_cmd_tx` and `timed_object_get` run an optional `moca-cmd` (Docker `moca-cmd` container or `PATH`) and return non-zero on a non-zero exit or when it prints `run command error:` or the no-balance message (current `moca-cmd` builds exit 0 on failures). `cosmos_tx` broadcasts with `--gas auto --fees "$COSMOS_TX_FEES"` (default `10000000000000000amoca`).
+Shared helpers live in `tests/libs/`. `exec_moca_cmd`, `exec_moca_cmd_signed`, `moca_cmd_tx` and `timed_object_get` run an optional `moca-cmd` (Docker `moca-cmd` container or `PATH`) and return non-zero on a non-zero exit or when it prints `run command error:` or the no-balance message (current `moca-cmd` builds exit 0 on failures). `MOCA_CMD_DEADLINE=<seconds>` caps one signed call by wrapping `moca-cmd` in `timeout(1)` where it runs — inside the sidecar, or on the host, which then needs GNU coreutils (`brew install coreutils` on macOS); a hit cap returns 124, or 137 when the process had to be KILLed. `cosmos_tx` broadcasts with `--gas auto --fees "$COSMOS_TX_FEES"` (default `10000000000000000amoca`).
 
 ## Repository structure
 

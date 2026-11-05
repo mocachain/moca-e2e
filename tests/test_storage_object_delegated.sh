@@ -29,6 +29,10 @@ require_write_enabled "storage object delegated test"
 if ! resolve_moca_cmd >/dev/null 2>&1; then
   skip "moca-cmd required for delegated object put/update"
 fi
+# The seal deadline below wraps moca-cmd in timeout(1); a host binary needs GNU coreutils for that.
+if ! moca_cmd_timeout_bin "$(resolve_moca_cmd)" >/dev/null 2>&1; then
+  skip "GNU timeout(1) not found on PATH (macOS: brew install coreutils); needed to cap the delegated seal wait"
+fi
 # moca-cmd refs that predate the flag would fail on an unknown option, not on the flow.
 # (captured first: `grep -q` on a live pipe closes it early, which pipefail reports as a failure)
 PUT_HELP="$(exec_moca_cmd object put -h 2>/dev/null || true)"
@@ -56,6 +60,10 @@ OBJECT_REL="${BUCKET_NAME}/${OBJECT_NAME}"
 CONTENT_TYPE="application/octet-stream"
 # Hard cap on each delegated put/update (moca-cmd blocks until SEALED). Override for slow stacks.
 DELEGATE_SEAL_DEADLINE="${DELEGATE_SEAL_DEADLINE:-180}"
+if [[ ! "$DELEGATE_SEAL_DEADLINE" =~ ^[1-9][0-9]*$ ]]; then
+  echo "FAIL: DELEGATE_SEAL_DEADLINE must be a whole number of seconds, got '${DELEGATE_SEAL_DEADLINE}'"
+  exit 1
+fi
 # /tmp is shared with the moca-cmd sidecar: put sources and the get target must live there.
 SOURCE_FILE="$(create_test_file "/tmp/${BUCKET_NAME}-v1.txt" "delegated put $(date) ${RANDOM}")"
 UPDATE_FILE="$(create_test_file "/tmp/${BUCKET_NAME}-v2.txt" "delegated update $(date) ${RANDOM} - second revision, deliberately longer than the first")"
@@ -124,10 +132,11 @@ print_test_section "Step 2: object put --delegate (SP creates the object on chai
 # Its errors are printed as "run command error: ..." with exit 0, so assert on the output.
 # The poll has no timeout of its own (an SP that never seals would hang the suite), so
 # cap it: SEALED normally lands within a few blocks of the upload finishing.
+# 124 = timeout(1) hit the cap; 137 = moca-cmd ignored TERM and was KILLed.
 rc=0
-out=$(with_deadline "$DELEGATE_SEAL_DEADLINE" exec_moca_cmd_signed object put --delegate --contentType "$CONTENT_TYPE" "$SOURCE_FILE" "$OBJECT_URL") || rc=$?
-if [ "$rc" -eq 124 ]; then
-  echo "FAIL: delegated object put still not SEALED after ${DELEGATE_SEAL_DEADLINE}s: $(echo "$out" | tail -1)"
+out=$(MOCA_CMD_DEADLINE="$DELEGATE_SEAL_DEADLINE" exec_moca_cmd_signed object put --delegate --contentType "$CONTENT_TYPE" "$SOURCE_FILE" "$OBJECT_URL") || rc=$?
+if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+  echo "FAIL: delegated object put still not SEALED after ${DELEGATE_SEAL_DEADLINE}s (moca-cmd exit ${rc}): $(echo "$out" | tail -1)"
   exit 1
 fi
 if ! echo "$out" | grep -qF -- "upload ${OBJECT_NAME} to ${OBJECT_URL}"; then
@@ -171,9 +180,9 @@ print_success "downloaded object sha256 matches (${SOURCE_SHA:0:12}...)"
 
 print_test_section "Step 5: object update --delegate (SP replaces the content on chain, blocks until re-sealed)"
 rc=0
-out=$(with_deadline "$DELEGATE_SEAL_DEADLINE" exec_moca_cmd_signed object update --delegate --contentType "$CONTENT_TYPE" "$UPDATE_FILE" "$OBJECT_URL") || rc=$?
-if [ "$rc" -eq 124 ]; then
-  echo "FAIL: delegated object update still not re-SEALED after ${DELEGATE_SEAL_DEADLINE}s: $(echo "$out" | tail -1)"
+out=$(MOCA_CMD_DEADLINE="$DELEGATE_SEAL_DEADLINE" exec_moca_cmd_signed object update --delegate --contentType "$CONTENT_TYPE" "$UPDATE_FILE" "$OBJECT_URL") || rc=$?
+if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+  echo "FAIL: delegated object update still not re-SEALED after ${DELEGATE_SEAL_DEADLINE}s (moca-cmd exit ${rc}): $(echo "$out" | tail -1)"
   exit 1
 fi
 if ! echo "$out" | grep -qF -- "update ${OBJECT_NAME} to ${OBJECT_URL}"; then

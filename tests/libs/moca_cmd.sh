@@ -58,7 +58,7 @@ exec_moca_cmd() {
   fi
   [ -n "$MOCA_CMD_HOME" ] && net_args+=(--home "$MOCA_CMD_HOME")
   [ -n "$MOCA_CMD_PASSWORD_FILE" ] && net_args+=(-p "$MOCA_CMD_PASSWORD_FILE")
-  _moca_cmd_run "$bin" "${net_args[@]}" "$@"
+  _moca_cmd_run "$bin" ${net_args[@]+"${net_args[@]}"} "$@"
 }
 
 # exec_moca_cmd_signed: run moca-cmd with network flags + keystore (for write operations)
@@ -84,7 +84,7 @@ exec_moca_cmd_signed() {
   fi
   if [[ "$target" == docker:* ]]; then
     local container="${target#docker:}"
-    _moca_cmd_run docker exec "$container" "${cap[@]}" moca-cmd -p /root/.moca-cmd/password.txt "$@"
+    _moca_cmd_run docker exec "$container" ${cap[@]+"${cap[@]}"} moca-cmd -p /root/.moca-cmd/password.txt "$@"
     return $?
   fi
   bin="${target#local:}"
@@ -96,7 +96,7 @@ exec_moca_cmd_signed() {
   fi
   [ -n "$MOCA_CMD_HOME" ] && args+=(--home "$MOCA_CMD_HOME")
   [ -n "$MOCA_CMD_PASSWORD_FILE" ] && args+=(-p "$MOCA_CMD_PASSWORD_FILE")
-  _moca_cmd_run "${cap[@]}" "$bin" "${args[@]}" "$@"
+  _moca_cmd_run ${cap[@]+"${cap[@]}"} "$bin" ${args[@]+"${args[@]}"} "$@"
 }
 
 # moca_cmd_timeout_bin <target>: the timeout(1) that runs next to moca-cmd for MOCA_CMD_DEADLINE:

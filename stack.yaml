@@ -11,19 +11,19 @@ components:
     ref: 49c17e237a6cebebd09eee443d58175c4d60fab2
   moca-cmd:
     repo: mocachain/moca-cmd
-    ref: d49befb2047dfd7adab9fa4596101d72242372e3
+    ref: faada7f3398309141ddde282342efbea21671ac7
   moca-juno:
     repo: mocachain/moca-juno
     ref: 31ec90965d72da85e4075ca36f9b6733eb2704a8
   moca-common:
     repo: mocachain/moca-common
-    ref: main
+    ref: go/v1.3.0-rc1
   moca-go-sdk:
     repo: mocachain/moca-go-sdk
-    ref: main
+    ref: v1.3.0-rc1
   moca-cosmos-sdk:
     repo: mocachain/moca-cosmos-sdk
-    ref: main
+    ref: v1.4.0-rc1
   moca-cometbft:
     repo: mocachain/moca-cometbft
-    ref: main
+    ref: v1.3.0-rc1

@@ -27,7 +27,7 @@ elif [ -n "${GITHUB_TOKEN:-}" ]; then
   TOKEN_ARG="--build-arg GITHUB_TOKEN=${GITHUB_TOKEN}"
 fi
 
-# Base images. The Dockerfile defaults build the main stack (Go 1.26.10 on
+# Base images. The Dockerfile defaults build the main stack (Go 1.26.11 on
 # trixie); a stack on an older Go line sets GO_IMAGE and BASE_IMAGE instead
 # (test-stack-1.4.yml).
 GO_ARG=""; BASE_ARG=""

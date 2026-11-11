@@ -1,4 +1,4 @@
-ARG GO_IMAGE=golang:1.26.10-trixie
+ARG GO_IMAGE=golang:1.26.11-trixie
 ARG BASE_IMAGE=debian:trixie-slim
 FROM ${GO_IMAGE} AS builder
 

@@ -8,10 +8,10 @@ components:
     ref: a12d487e07e32e599840cc1458cb6cecff5fc15d
   moca-storage-provider:
     repo: mocachain/moca-storage-provider
-    ref: 960b521c216f543a1e545f4bb4c57bb29c4cd994
+    ref: 4b962fb437b0ee27f8b3f1334f55f18757d995bf
   moca-cmd:
     repo: mocachain/moca-cmd
-    ref: d91dc5cbc8a0a1469a206bdaedb62400b2fc9dec
+    ref: 4ba6a6c41d0c9d6bcec55e3db153fd8fbc8ec4ca
   moca-juno:
     repo: mocachain/moca-juno
     ref: 31ec90965d72da85e4075ca36f9b6733eb2704a8
